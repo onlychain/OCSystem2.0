@@ -1,15 +1,22 @@
-﻿using OnlyChain.Network.Objects;
+﻿#nullable enable
+
+using OnlyChain.Network.Objects;
 using System;
+using System.IO;
+using System.Net.Sockets;
 
 namespace OnlyChain.Network {
     public sealed class GetValueEventArgs : EventArgs {
-        public readonly Node Sender;
-        public readonly byte[] Key;
-        public bool HasValue { get; set; } = false;
+        public readonly BDict Dict;
+        public readonly NetworkStream? Stream;
 
-        public GetValueEventArgs(Node sender, byte[] key) {
-            Sender = sender;
-            Key = key;
+        public byte[]? Value { get; set; }
+
+        public bool IsGetValue => Stream is not null;
+
+        public GetValueEventArgs(BDict dict, NetworkStream? stream) {
+            Dict = dict;
+            Stream = stream;
         }
     }
 }

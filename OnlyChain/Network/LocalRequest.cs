@@ -15,7 +15,7 @@ namespace OnlyChain.Network {
 
         public LocalRequest(ulong index, BDict request, TimeSpan timeout, CancellationToken cancellationToken) {
             Index = index;
-            DateTime = DateTime.Now;
+            DateTime = DateTime.UtcNow;
             Request = request;
             if (cancellationToken.CanBeCanceled) {
                 CancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(new CancellationTokenSource(timeout).Token, cancellationToken);

@@ -14,15 +14,14 @@ namespace OnlyChain.Model {
         public readonly ulong Nonce;
         public readonly Coin GasPrice;
         public readonly ulong GasLimit;
-        public readonly Address To;
+        public readonly Bytes<Address> To;
         public readonly Coin Value;
         public readonly byte[] Data;
-        public readonly PublicKey PublicKey;
+        public readonly Bytes<Address> From;
         public readonly Signature Signature;
 
-        public readonly Hash<Size256> HashSignHeader;
-        public readonly Hash<Size256> Hash;
-        public readonly Address From;
+        public readonly Bytes<Hash256> HashSignHeader;
+        public readonly Bytes<Hash256> Hash;
         /// <summary>
         /// 最低要消耗的汽油费
         /// </summary>
@@ -32,6 +31,7 @@ namespace OnlyChain.Model {
         /// </summary>
         public ulong ContractGasUsed { get; internal set; }
         public int BlockHeight { get; internal set; }
+        public PublicKey FromPublicKey { get; internal set; } = null!;
         public AttachData? AttachData { get; internal set; }
         /// <summary>
         /// 网络序列化后的字节数
@@ -58,14 +58,13 @@ namespace OnlyChain.Model {
             Nonce = deserializer.Read(Deserializer.VarUInt);
             GasPrice = deserializer.Read(Deserializer.VarUInt);
             GasLimit = deserializer.Read(Deserializer.VarUInt);
-            To = deserializer.Read<Address>();
+            To = deserializer.Read<Bytes<Address>>();
             Value = deserializer.Read(Deserializer.VarUInt);
             Data = deserializer.Read(Deserializer.TxData);
-            PublicKey = deserializer.Read(Deserializer.PublicKeyStruct);
+            From = deserializer.Read<Bytes<Address>>();
             HashSignHeader = rawData[..deserializer.Index].MessageHash();
             Signature = deserializer.Read(Deserializer.Signature);
 
-            From = PublicKey.ToAddress();
             Hash = rawData[..deserializer.Index].MessageHash();
             Bytes = deserializer.Index;
 
@@ -74,7 +73,7 @@ namespace OnlyChain.Model {
             AttachData = AttachData.ParseData(this);
         }
 
-        Transaction(ReadOnlySpan<byte> rawData, Hash<Size256> txHash, UserDictionary userDictionary) {
+        Transaction(ReadOnlySpan<byte> rawData, Bytes<Hash256> txHash, UserDictionary userDictionary) {
             Hash = txHash;
 
             var deserializer = new Deserializer(rawData);
@@ -88,7 +87,7 @@ namespace OnlyChain.Model {
             Data = deserializer.Read(Deserializer.TxData);
             ulong fromIndex = deserializer.Read(Deserializer.VarUInt);
             From = userDictionary.GetAddress((int)fromIndex);
-            PublicKey = userDictionary.GetPublicKey((int)fromIndex);
+            FromPublicKey = userDictionary.GetPublicKey((int)fromIndex);
             Signature = deserializer.Read(Deserializer.Signature);
 
             BaseGasUsed = (ulong)(21000 + Data.Length * 200);
@@ -96,9 +95,9 @@ namespace OnlyChain.Model {
             AttachData = AttachData.ParseData(this);
         }
 
-        unsafe public Transaction(ReadOnlySpan<byte> privateKey, ulong nonce, Coin gasPrice, ulong gasLimit, Address to, Coin value, byte[]? data = null) {
-            PublicKey = Secp256k1.Secp256k1.CreatePublicKey(privateKey);
-            From = PublicKey.ToAddress();
+        unsafe public Transaction(ReadOnlySpan<byte> privateKey, ulong nonce, Coin gasPrice, ulong gasLimit, Bytes<Address> to, Coin value, byte[]? data = null) {
+            FromPublicKey = Secp256k1.Secp256k1.CreatePublicKey(privateKey);
+            From = FromPublicKey.ToAddress();
             Nonce = nonce;
             GasPrice = gasPrice;
             GasLimit = gasLimit;
@@ -106,68 +105,61 @@ namespace OnlyChain.Model {
             Value = value;
             Data = data ?? Array.Empty<byte>();
 
-            Span<byte> buffer = stackalloc byte[NetworkMaxBufferLength(Data.Length)];
-            var serializer = new Serializer(buffer);
+            var serializer = new Serializer();
             NetworkSerializeWithoutSignature(ref serializer);
-            Hash<Size256> messageHash = HashTools.MessageHash(buffer[..serializer.Index]);
+            var messageHash = HashTools.MessageHash(serializer.RawData);
             Signature = Ecdsa.Sign(privateKey, messageHash);
             HashSignHeader = messageHash;
 
-            serializer.Write(Serializer.Signature, Signature);
-            Hash = HashTools.MessageHash(buffer[..serializer.Index]);
+            serializer.WriteSignature(Signature);
+            Hash = HashTools.MessageHash(serializer.RawData);
 
             AttachData = AttachData.ParseData(this);
         }
 
         public byte[] NetworkSerialize() {
-            Span<byte> buffer = stackalloc byte[NetworkMaxBufferLength(Data.Length)];
-            int length = NetworkSerialize(buffer);
-            return buffer[..length].ToArray();
+            Serializer serializer = new Serializer();
+            NetworkSerialize(ref serializer);
+            return serializer.RawData.ToArray();
         }
 
-        public int NetworkSerialize(Span<byte> buffer) {
-            var serializer = new Serializer(buffer);
+        public void NetworkSerialize(ref Serializer serializer) {
             NetworkSerializeWithoutSignature(ref serializer);
-            serializer.Write(Serializer.Signature, Signature);
-            return serializer.Index;
+            serializer.WriteSignature(Signature);
         }
 
         private void NetworkSerializeWithoutSignature(ref Serializer serializer) {
-            serializer.Write(Serializer.VarUInt, Nonce);
-            serializer.Write(Serializer.VarUInt, GasPrice);
-            serializer.Write(Serializer.VarUInt, GasLimit);
+            serializer.WriteVarUInt(Nonce);
+            serializer.WriteVarUInt(GasPrice);
+            serializer.WriteVarUInt(GasLimit);
             serializer.Write(To);
-            serializer.Write(Serializer.VarUInt, Value);
-            serializer.Write(Serializer.TxData, Data);
-            serializer.Write(Serializer.PublicKeyStruct, PublicKey);
-        }
-
-        unsafe public static int NetworkMaxBufferLength(int dataBytes) {
-            return 9 * 3 + 20 + 9 + 9 + dataBytes + 64 + 64;
+            serializer.WriteVarUInt(Value);
+            serializer.WriteTxData(Data);
+            serializer.Write(From);
         }
 
 
-        public byte[] NativeSerialize(uint blockHeight, UserDictionary userDictionary) {
-            Span<byte> buffer = stackalloc byte[NativekMaxBufferLength(Data.Length)];
-            int length = NativeSerialize(buffer, blockHeight, userDictionary);
-            return buffer[..length].ToArray();
-        }
+        //public byte[] NativeSerialize(uint blockHeight, UserDictionary userDictionary) {
+        //    Span<byte> buffer = stackalloc byte[NativekMaxBufferLength(Data.Length)];
+        //    int length = NativeSerialize(buffer, blockHeight, userDictionary);
+        //    return buffer[..length].ToArray();
+        //}
 
-        public int NativeSerialize(Span<byte> buffer, uint nativeBlockIndex, UserDictionary userDictionary) {
-            var serializer = new Serializer(buffer);
-            serializer.Write(Serializer.VarUInt, nativeBlockIndex);
-            serializer.Write(Serializer.VarUInt, Nonce);
-            serializer.Write(Serializer.VarUInt, GasPrice);
-            serializer.Write(Serializer.VarUInt, GasLimit);
-            int toIndex = userDictionary.GetOrCreateIndex(To);
-            serializer.Write(Serializer.VarUInt, (ulong)toIndex);
-            serializer.Write(Serializer.VarUInt, Value);
-            serializer.Write(Serializer.TxData, Data);
-            int fromIndex = userDictionary.Set(From, PublicKey);
-            serializer.Write(Serializer.VarUInt, (ulong)fromIndex);
-            serializer.Write(Serializer.Signature, Signature);
-            return serializer.Index;
-        }
+        //public int NativeSerialize(Span<byte> buffer, uint nativeBlockIndex, UserDictionary userDictionary) {
+        //    var serializer = new Serializer();
+        //    serializer.Write(Serializer.VarUInt, nativeBlockIndex);
+        //    serializer.Write(Serializer.VarUInt, Nonce);
+        //    serializer.Write(Serializer.VarUInt, GasPrice);
+        //    serializer.Write(Serializer.VarUInt, GasLimit);
+        //    int toIndex = userDictionary.GetOrCreateIndex(To);
+        //    serializer.Write(Serializer.VarUInt, (ulong)toIndex);
+        //    serializer.Write(Serializer.VarUInt, Value);
+        //    serializer.Write(Serializer.TxData, Data);
+        //    int fromIndex = userDictionary.Set(From, PublicKey);
+        //    serializer.Write(Serializer.VarUInt, (ulong)fromIndex);
+        //    serializer.Write(Serializer.Signature, Signature);
+        //    return serializer.Index;
+        //}
 
         unsafe public static int NativekMaxBufferLength(int dataBytes) {
             return 9 * 7 + dataBytes + 9 + 64;
@@ -186,7 +178,7 @@ namespace OnlyChain.Model {
         /// </summary>
         /// <param name="rawData"></param>
         /// <returns></returns>
-        public static Transaction NativeDeserialize(ReadOnlySpan<byte> rawData, Hash<Size256> txHash, UserDictionary userDictionary)
+        public static Transaction NativeDeserialize(ReadOnlySpan<byte> rawData, Bytes<Hash256> txHash, UserDictionary userDictionary)
             => new Transaction(rawData, txHash, userDictionary);
 
         public override bool Equals(object? obj) {
@@ -196,13 +188,13 @@ namespace OnlyChain.Model {
         public override int GetHashCode() => Hash.GetHashCode();
 
         public override string ToString() {
-            return AttachData switch
-            {
+            return AttachData switch {
                 null => $"普通交易: {Hash}",
                 SuperPledgeData _ => $"超级节点质押: {Hash}",
                 SuperRedemptionData _ => $"超级节点赎回: {Hash}",
                 VoteData _ => $"投票: {Hash}",
                 LockData _ => $"锁仓交易: {Hash}",
+                ContractInputData _ => $"合约调用: {Hash}",
                 _ => $"未知交易: {Hash}"
             };
         }

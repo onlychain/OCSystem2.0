@@ -10,15 +10,18 @@ using System.Threading.Tasks;
 
 namespace OnlyChain.Network {
     public interface IClient {
+        string? Name { get; }
         string? NetworkPrefix { get; }
-        Address Address { get; }
+        Bytes<Address> Address { get; }
         KBucket Nodes { get; }
         BlockChainSystem System { get; }
-        IPEndPoint UdpEndPoint { get; }
-        IPEndPoint TcpEndPoint { get; }
+        IPEndPoint EndPoint { get; }
+        P2P P2P { get; }
+        CancellationToken CloseCancellationToken { get; }
+        SuperNodeConfig? SuperConfig { get; }
 
-        event EventHandler<BroadcastEventArgs> ReceiveBroadcast;
+        Task<Node?> GetTargetNode(Bytes<Address> address);
 
-        ValueTask<Node?> Lookup(Address target, int nodePoolSize = 20, CancellationToken cancellationToken = default);
+        void Log(object message);
     }
 }

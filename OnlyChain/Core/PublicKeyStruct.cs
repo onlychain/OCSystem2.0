@@ -6,9 +6,9 @@ using System.Runtime.InteropServices;
 namespace OnlyChain.Core {
     [StructLayout(LayoutKind.Sequential)]
     public struct PublicKeyStruct {
-        public U256 X, Y;
+        public Secp256k1.Math.U256 X, Y;
 
-        public PublicKeyStruct(U256 x, U256 y) => (X, Y) = (x, y);
+        public PublicKeyStruct(Secp256k1.Math.U256 x, Secp256k1.Math.U256 y) => (X, Y) = (x, y);
         public PublicKeyStruct(PublicKey publicKey) : this(publicKey.X, publicKey.Y) { }
 
         public static implicit operator PublicKeyStruct(PublicKey publicKey) => new PublicKeyStruct(publicKey);

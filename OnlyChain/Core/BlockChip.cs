@@ -6,7 +6,7 @@ using System.Text;
 
 namespace OnlyChain.Core {
     public sealed class BlockChip {
-        public readonly Hash<Size160> Id;
+        public readonly Bytes<Hash160> Id;
         public readonly int TotalCount;
         public readonly int RestoreCount;
         public readonly int Index;
@@ -15,7 +15,7 @@ namespace OnlyChain.Core {
         public readonly Signature Signature;
 
         private byte[] rawDataWithoutSignature;
-        public Hash<Size256> MessageHash { get; private set; }
+        public Bytes<Hash256> MessageHash { get; private set; }
 
         // 20 bytes: 碎片id
         // 1 byte: 碎片总数
@@ -26,22 +26,25 @@ namespace OnlyChain.Core {
         // 64 bytes: 签名
         private BlockChip(ReadOnlySpan<byte> rawData) {
             Deserializer deserializer = new Deserializer(rawData);
-            Id = deserializer.Read<Hash<Size160>>();
+            Id = deserializer.Read<Bytes<Hash160>>();
             TotalCount = deserializer.Read<byte>();
             RestoreCount = deserializer.Read<byte>();
             Index = deserializer.Read<byte>();
             uint blockBytes = deserializer.Read(Deserializer.VarUInt32);
             if (blockBytes > Constants.MaxBlockBytes) throw new InvalidBlockChipException();
             BlockBytes = (int)blockBytes;
-            int chipBytes = (BlockBytes + TotalCount - 1) / TotalCount;
+            int chipBytes = (BlockBytes + RestoreCount - 1) / RestoreCount;
             Data = rawData.Slice(deserializer.Index, chipBytes).ToArray();
             deserializer.Index += chipBytes;
             MessageHash = rawData[..deserializer.Index].MessageHash();
             Signature = deserializer.Read(Deserializer.Signature);
-            if (deserializer.Index != rawData.Length) throw new InvalidBlockChipException();
+            if (deserializer.Index != rawData.Length) {
+                string debugText = Encoding.UTF8.GetString(rawData);
+                throw new InvalidBlockChipException();
+            }
         }
 
-        public BlockChip(Hash<Size160> id, int totalCount, int restoreCount, int index, int blockBytes, byte[] data, ReadOnlySpan<byte> privateKey) {
+        public BlockChip(Bytes<Hash160> id, int totalCount, int restoreCount, int index, int blockBytes, byte[] data, ReadOnlySpan<byte> privateKey) {
             Id = id;
             TotalCount = totalCount;
             RestoreCount = restoreCount;
@@ -55,12 +58,12 @@ namespace OnlyChain.Core {
         }
 
         unsafe private byte[] SerializeWithoutSignature() {
-            var serializer = new Serializer(new byte[sizeof(Hash<Size160>) + 1 + 1 + 1 + 9 + Data.Length]);
+            var serializer = new Serializer();
             serializer.Write(Id);
             serializer.Write((byte)TotalCount);
             serializer.Write((byte)RestoreCount);
             serializer.Write((byte)Index);
-            serializer.Write(Serializer.VarUInt, (ulong)BlockBytes);
+            serializer.WriteVarUInt((ulong)BlockBytes);
             serializer.Write(Data);
             return serializer.RawData.ToArray();
         }
@@ -70,9 +73,9 @@ namespace OnlyChain.Core {
                 rawDataWithoutSignature = SerializeWithoutSignature();
             }
 
-            var serializer = new Serializer(new byte[rawDataWithoutSignature.Length + 64]);
+            var serializer = new Serializer();
             serializer.Write(rawDataWithoutSignature);
-            serializer.Write(Serializer.Signature, Signature);
+            serializer.WriteSignature(Signature);
             return serializer.RawData.ToArray();
         }
 
@@ -126,12 +129,12 @@ namespace OnlyChain.Core {
                 }
             }
 
-            Serializer serializer = stackalloc byte[sizeof(Hash<Size256>) + 1 + 1 + 9];
+            Serializer serializer = new Serializer();
             serializer.Write(block.Hash);
             serializer.Write((byte)totalCount);
             serializer.Write((byte)restoreCount);
-            serializer.Write(Serializer.VarUInt, (ulong)data.Length);
-            Hash<Size160> id = Ripemd160.ComputeHash(serializer.RawData.MessageHash());
+            serializer.WriteVarUInt((ulong)data.Length);
+            Bytes<Hash160> id = Ripemd160.ComputeHash(serializer.RawData.MessageHash());
 
             var chips = new BlockChip[totalCount];
             for (int i = 0; i < chips.Length; i++) {

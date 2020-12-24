@@ -1,8 +1,8 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFramework>net5.0</TargetFramework>
     <Platforms>AnyCPU;x64;x86</Platforms>
   </PropertyGroup>
 
@@ -32,6 +32,18 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Core\Address.cs" />
+    <Compile Remove="Core\Hash.cs" />
+    <Compile Remove="Core\MethodBindingHelper.cs" />
+    <Compile Remove="Core\PrecommitVote.cs" />
+    <Compile Remove="Core\Size160.cs" />
+    <Compile Remove="Core\Size256.cs" />
+    <Compile Remove="Core\TimeSystem.cs" />
+    <Compile Remove="Database\AsyncLevelDB.cs" />
+    <Compile Remove="Network\SuperNodeClient.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\OnlyChain.Secp256k1\OnlyChain.Secp256k1.csproj" />

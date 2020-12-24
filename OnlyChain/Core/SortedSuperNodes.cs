@@ -9,16 +9,16 @@ using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace OnlyChain.Core {
-    public sealed class SortedSuperNodes : IReadOnlyList<Address> {
-        sealed class Comparer : IComparer<Address> {
+    public sealed class SortedSuperNodes : IReadOnlyList<Bytes<Address>> {
+        sealed class Comparer : IComparer<Bytes<Address>> {
             private readonly SortedSuperNodes source;
 
             public Comparer(SortedSuperNodes source) => this.source = source;
 
-            unsafe public int Compare([AllowNull] Address x, [AllowNull] Address y) {
+            unsafe public int Compare([AllowNull] Bytes<Address> x, [AllowNull] Bytes<Address> y) {
                 if (x == y) return 0;
-                ref readonly UserState xValue = ref source.mpt.TryGetValue(x);
-                ref readonly UserState yValue = ref source.mpt.TryGetValue(y);
+                ref readonly UserState xValue = ref source.mpt.GetRefValue(x);
+                ref readonly UserState yValue = ref source.mpt.GetRefValue(y);
                 if (xValue.IsNull() & yValue.IsNull()) return x.CompareTo(y);
                 if (xValue.IsNull()) return 1;
                 if (yValue.IsNull()) return -1;
@@ -29,15 +29,15 @@ namespace OnlyChain.Core {
             }
         }
 
-        private MerklePatriciaTree<Address, UserState, Hash<Size256>> mpt; // 用于获得得票数，排序依据
-        private ImmutableSortedSet<Address> sortedAddresses;
+        private MerklePatriciaTree<Bytes<Address>, UserState, Bytes<Hash256>> mpt; // 用于获得得票数，排序依据
+        private ImmutableSortedSet<Bytes<Address>> sortedAddresses;
 
-        public SortedSuperNodes(MerklePatriciaTree<Address, UserState, Hash<Size256>> mpt, IEnumerable<Address> superAddresses) {
+        public SortedSuperNodes(MerklePatriciaTree<Bytes<Address>, UserState, Bytes<Hash256>> mpt, IEnumerable<Bytes<Address>> superAddresses) {
             this.mpt = mpt;
-            sortedAddresses = ImmutableSortedSet<Address>.Empty.WithComparer(new Comparer(this)).Intersect(superAddresses);
+            sortedAddresses = ImmutableSortedSet<Bytes<Address>>.Empty.WithComparer(new Comparer(this)).Intersect(superAddresses);
         }
 
-        public void Update(MerklePatriciaTree<Address, UserState, Hash<Size256>> mpt, IEnumerable<Address> changedAddresses) {
+        public void Update(MerklePatriciaTree<Bytes<Address>, UserState, Bytes<Hash256>> mpt, IEnumerable<Bytes<Address>> changedAddresses) {
             var builder = sortedAddresses.ToBuilder();
             builder.ExceptWith(changedAddresses);
             this.mpt = mpt;
@@ -45,11 +45,11 @@ namespace OnlyChain.Core {
             sortedAddresses = builder.ToImmutable();
         }
 
-        public Address this[int index] => sortedAddresses[index];
+        public Bytes<Address> this[int index] => sortedAddresses[index];
 
         public int Count => sortedAddresses.Count;
 
-        public IEnumerator<Address> GetEnumerator() => sortedAddresses.GetEnumerator();
+        public IEnumerator<Bytes<Address>> GetEnumerator() => sortedAddresses.GetEnumerator();
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }

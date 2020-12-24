@@ -39,6 +39,7 @@ namespace OnlyChain.Database {
 
         public ReadOnlySpan<byte> Key {
             get {
+                if (!IsValid) throw new InvalidOperationException();
                 void* key = Native.iter_key(nativePointer, out var len);
                 return new ReadOnlySpan<byte>(key, (int)len);
             }
@@ -46,6 +47,7 @@ namespace OnlyChain.Database {
 
         public ReadOnlySpan<byte> Value {
             get {
+                if (!IsValid) throw new InvalidOperationException();
                 void* value = Native.iter_value(nativePointer, out var len);
                 return new ReadOnlySpan<byte>(value, (int)len);
             }

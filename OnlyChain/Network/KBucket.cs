@@ -12,12 +12,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Collections;
 
 namespace OnlyChain.Network {
-    public sealed class KBucket : IEnumerable<Node>, IReadOnlyDictionary<Address, Node> {
-        readonly static Random random = new Random();
+    public sealed class KBucket : IEnumerable<Node>, IReadOnlyDictionary<Bytes<Address>, Node> {
         /// <summary>
         /// 表示节点需要重新ping的时间间隔（不能大于63s）
         /// </summary>
-        public readonly static TimeSpan Timeout = TimeSpan.FromMinutes(0.5);
+        public readonly static TimeSpan Timeout = TimeSpan.FromMinutes(1);
 
         [System.Diagnostics.DebuggerDisplay("{Node}")]
         private struct Slot : IEquatable<Slot>, IDisposable {
@@ -26,10 +25,10 @@ namespace OnlyChain.Network {
 
             public Slot(Node node, Action<Node> timeoutAction) {
                 Node = node;
-                var dueTime = Timeout - (DateTime.Now - node.RefreshTime) - TimeSpan.FromSeconds(random.NextDouble() * 3); // 加上微量扰动，防止同一时间发起大量ping请求
+                var dueTime = Timeout - (DateTime.UtcNow - node.RefreshTime); // 加上微量扰动，防止同一时间发起大量ping请求
                 if (dueTime < TimeSpan.Zero) dueTime = TimeSpan.Zero;
                 // refreshTask = null!;
-                refreshTask = new Timer(n => timeoutAction((Node)n!), node, dueTime, Timeout + TimeSpan.FromSeconds(random.NextDouble()));
+                refreshTask = new Timer(n => timeoutAction((Node)n!), node, dueTime, Timeout);
             }
 
             public bool Equals(Slot other) => Node.Address == other.Node.Address;
@@ -49,10 +48,10 @@ namespace OnlyChain.Network {
         }
 
         public readonly int K;
-        public readonly Address MyAddress;
+        public readonly Bytes<Address> MyAddress;
         private readonly SortedDictionary<DateTime, Slot> historyRefreshRecord = new SortedDictionary<DateTime, Slot>();
         //private readonly Timer refreshTimer;
-        private readonly SortedList<Address, Slot>[] buckets = new SortedList<Address, Slot>[Address.Size * 8];
+        private readonly SortedList<Bytes<Address>, Slot>[] buckets = new SortedList<Bytes<Address>, Slot>[Bytes<Address>.Size * 8];
         private readonly Func<Node, Task<bool>> ping;
 
         /// <summary>
@@ -60,20 +59,20 @@ namespace OnlyChain.Network {
         /// </summary>
         public int Count => buckets.Sum(bucket => bucket.Count);
 
-        public IEnumerable<Address> Keys => throw new NotImplementedException();
+        public IEnumerable<Bytes<Address>> Keys => throw new NotImplementedException();
 
         public IEnumerable<Node> Values => throw new NotImplementedException();
 
-        public Node this[Address key] => throw new NotImplementedException();
+        public Node this[Bytes<Address> key] => throw new NotImplementedException();
 
-        public KBucket(int k, in Address myAddress, Func<Node, Task<bool>> ping) {
+        public KBucket(int k, in Bytes<Address> myAddress, Func<Node, Task<bool>> ping) {
             if (k <= 0) throw new ArgumentOutOfRangeException(nameof(k));
 
             K = k;
             MyAddress = myAddress;
             this.ping = ping ?? throw new ArgumentNullException(nameof(ping));
             for (int i = 0; i < buckets.Length; i++) {
-                buckets[i] = new SortedList<Address, Slot>(k + 1, Comparer<Address>.Create((a, b) => (MyAddress ^ a).CompareTo(MyAddress ^ b)));
+                buckets[i] = new SortedList<Bytes<Address>, Slot>(k + 1, Comparer<Bytes<Address>>.Create((a, b) => (MyAddress ^ a).CompareTo(MyAddress ^ b)));
             }
 
             //refreshTimer = new Timer(async delegate {
@@ -97,8 +96,8 @@ namespace OnlyChain.Network {
             //            s.Node!.RefreshTime = DateTime.Now;
             //            AddRefreshRecord(s);
             //        } else {
-            //            Console.WriteLine($"remove: {s.Node!.Address}");
-            //            Remove(s.Node!.Address);
+            //            Console.WriteLine($"remove: {s.Node!.Bytes<Address>}");
+            //            Remove(s.Node!.Bytes<Address>);
             //        }
             //    }
 
@@ -114,7 +113,7 @@ namespace OnlyChain.Network {
         /// <param name="node"></param>
         /// <param name="lookup">该值为true表示新节点是通过find_node请求到的</param>
         /// <returns></returns>
-        public async ValueTask<AddResult> Add(Node node, bool lookup) {
+        public async Task<AddResult> Add(Node node, bool lookup) {
             int index = (node.Address ^ MyAddress).Log2;
             if (index < 0) return AddResult.IsSelf;
 
@@ -123,7 +122,7 @@ namespace OnlyChain.Network {
             lock (bucket) {
                 async void TimeoutAction(Node n) {
                     if (await ping(n)) {
-                        n.RefreshTime = DateTime.Now;
+                        n.RefreshTime = DateTime.UtcNow;
                     } else {
                         lock (bucket) {
                             if (bucket.Remove(n.Address, out var slot)) slot.Dispose();
@@ -160,10 +159,10 @@ namespace OnlyChain.Network {
                 }
             }
 
-            return pingTask is { } ? await pingTask : AddResult.Success;
+            return pingTask is not null ? await pingTask : AddResult.Success;
         }
 
-        public bool Remove(Address address) {
+        public bool Remove(Bytes<Address> address) {
             int index = (address ^ MyAddress).Log2;
             if (index < 0) return false;
 
@@ -177,11 +176,11 @@ namespace OnlyChain.Network {
             return false;
         }
 
-        public Node[] FindNode(Address target, int count) {
+        public Node[] FindNode(Bytes<Address> target, int count) {
             if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
             if (count == 0) return Array.Empty<Node>();
 
-            Address diff = MyAddress ^ target;
+            Bytes<Address> diff = MyAddress ^ target;
             int diffIndex = diff.Log2;
             var result = new List<Node>(count + K);
             var prevCount = 0;
@@ -210,7 +209,8 @@ namespace OnlyChain.Network {
             return result.ToArray();
         }
 
-        public Node[] FindNode(Address target, int count, int randomCount) {
+        public Node[] FindNode(Bytes<Address> target, int count, int randomCount) {
+            var random = new Random();
             var hashset = new HashSet<Node>(FindNode(target, count));
             var otherNodes = ((IEnumerable<Node>)this).Where(node => !hashset.Contains(node)).ToList();
             if (otherNodes.Count > randomCount) {
@@ -220,6 +220,33 @@ namespace OnlyChain.Network {
                 }
             }
             return hashset.Concat(otherNodes.Take(randomCount)).ToArray();
+        }
+
+        public IEnumerable<Node> FindNode(Bytes<Address> target) {
+            Bytes<Address> diff = MyAddress ^ target;
+            int diffIndex = diff.Log2;
+            for (int i = diffIndex; i >= 0; i--) {
+                if (diff.Bit(i)) {
+                    var bucket = buckets[i];
+                    Slot[] slots;
+                    lock (bucket) slots = bucket.Values.ToArray();
+
+                    foreach (var s in slots) {
+                        yield return s.Node;
+                    }
+                }
+            }
+            for (int i = 0; i < buckets.Length; i++) {
+                if (!diff.Bit(i)) {
+                    var bucket = buckets[i];
+                    Slot[] slots;
+                    lock (bucket) slots = bucket.Values.ToArray();
+
+                    foreach (var s in slots) {
+                        yield return s.Node;
+                    }
+                }
+            }
         }
 
         public IEnumerator<Node> GetEnumerator() {
@@ -234,7 +261,7 @@ namespace OnlyChain.Network {
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        public bool ContainsKey(Address key) {
+        public bool ContainsKey(Bytes<Address> key) {
             int index = (key ^ MyAddress).Log2;
             if (index < 0) return false;
 
@@ -242,7 +269,7 @@ namespace OnlyChain.Network {
             lock (bucket) return bucket.ContainsKey(key);
         }
 
-        public bool TryGetValue(Address key, [MaybeNullWhen(false)] out Node value) {
+        public bool TryGetValue(Bytes<Address> key, [MaybeNullWhen(false)] out Node value) {
             int index = (key ^ MyAddress).Log2;
             if (index < 0) {
                 value = default!;
@@ -260,7 +287,7 @@ namespace OnlyChain.Network {
             }
         }
 
-        IEnumerator<KeyValuePair<Address, Node>> IEnumerable<KeyValuePair<Address, Node>>.GetEnumerator()
-            => ((IEnumerable<Node>)this).Select(node => new KeyValuePair<Address, Node>(node.Address, node)).GetEnumerator();
+        IEnumerator<KeyValuePair<Bytes<Address>, Node>> IEnumerable<KeyValuePair<Bytes<Address>, Node>>.GetEnumerator()
+            => ((IEnumerable<Node>)this).Select(node => new KeyValuePair<Bytes<Address>, Node>(node.Address, node)).GetEnumerator();
     }
 }

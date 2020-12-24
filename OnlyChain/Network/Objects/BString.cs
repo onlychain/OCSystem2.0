@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using OnlyChain.Core;
 
 namespace OnlyChain.Network.Objects {
@@ -13,15 +15,17 @@ namespace OnlyChain.Network.Objects {
 
         public static implicit operator BString(string value) => new BString(value);
 
-        public override void Write(Stream stream) {
+        protected override void Write(Stream stream) {
             stream.WriteByte(PrefixChar);
             WriteNoPrefix(stream, Value);
         }
 
         internal static void WriteNoPrefix(Stream stream, string value) {
-            stream.Write(Encoding.UTF8.GetBytes(value));
-            stream.WriteByte(0);
+            byte[] bytes = Encoding.UTF8.GetBytes(value);
+            stream.WriteVarUInt((ulong)bytes.Length);
+            stream.Write(bytes);
         }
+
 
         public override string ToString() => Value;
     }

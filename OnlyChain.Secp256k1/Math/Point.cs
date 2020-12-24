@@ -1,20 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OnlyChain.Secp256k1.Math {
+    [StructLayout(LayoutKind.Sequential)]
     internal readonly struct Point {
-        public static readonly Point Zero = new Point(default, default, isZero: true);
-
-        public readonly Fraction X, Y;
-        public readonly bool IsZero;
+        public readonly U256P X, Y;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public Point(in Fraction x, in Fraction y, bool isZero = false) {
+        public Point(in U256P x, in U256P y) {
             X = x;
             Y = y;
-            IsZero = isZero;
         }
     }
 }

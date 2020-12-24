@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="16.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\MyDocuments\Documents\Visual Studio 2019\Projects\OnlyChain\evmone\build\CMakeFiles\ec61171d08408d5fd55466cca59e3e38\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{18422B28-D107-380B-B7EC-E92F97D031B2}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

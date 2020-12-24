@@ -5,81 +5,97 @@ using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using OnlyChain.Secp256k1;
 using OnlyChain.Secp256k1.Math;
-using System.Numerics;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 
 namespace OnlyChain.Core {
     unsafe public ref struct Serializer {
-        public delegate int Writer<T>(Span<byte> data, T value);
+        public delegate int Writer<T>(ref Serializer s, T value);
 
-        public readonly Span<byte> Data;
+        public byte[]? Data;
         public int Index;
 
-        public readonly ReadOnlySpan<byte> RawData => Data[..Index];
+        public readonly ReadOnlySpan<byte> RawData => Data.AsSpan(0, Index);
 
-        public Serializer(Span<byte> data) {
-            Data = data;
+        public Serializer(int capacity) {
+            Data = new byte[capacity];
             Index = 0;
         }
 
-        public void Write<T>(Writer<T> writer, T value) {
-            Index += writer(Data[Index..], value);
-        }
-
         public void Write<T>(in T value) where T : unmanaged {
-            Unsafe.As<byte, T>(ref Unsafe.Add(ref MemoryMarshal.GetReference(Data), Index)) = value;
+            Reserved(sizeof(T));
+            Unsafe.As<byte, T>(ref MemoryMarshal.GetReference(WriteSpan)) = value;
             Index += sizeof(T);
         }
 
         public void Write(ReadOnlySpan<byte> value) {
-            value.CopyTo(Data[Index..]);
+            Reserved(value.Length);
+            value.CopyTo(WriteSpan);
             Index += value.Length;
         }
 
-        public static implicit operator Serializer(Span<byte> buffer) => new Serializer(buffer);
+        public void Reserved(int size) {
+            if (Data is null) {
+                Array.Resize(ref Data, Math.Max(size, 1024));
+            } else if (Data.Length < Index + size) {
+                int newSize = Math.Max(Data.Length * 3 / 2, Index + size);
+                Array.Resize(ref Data, newSize);
+            }
+        }
 
 
+        private readonly Span<byte> WriteSpan => Data.AsSpan(Index);
 
-        public readonly static Writer<PublicKey> PublicKey = (data, value) => value.Serialize(data, compressed: true);
 
-        public readonly static Writer<PublicKey> PublicKeyStruct = (data, value) => {
-            value.GetX(data[0..sizeof(U256)]);
-            value.GetY(data[sizeof(U256)..(sizeof(U256) * 2)]);
-            return sizeof(U256) * 2;
-        };
+        public void WritePublicKey(PublicKey value) {
+            Reserved(33);
+            Index += value.Serialize(WriteSpan, compressed: true);
+        }
 
-        public readonly static Writer<Signature> Signature = (data, value) => {
-            value.GetR(data[0..sizeof(U256)]);
-            value.GetS(data[sizeof(U256)..(sizeof(U256) * 2)]);
-            return sizeof(U256) * 2;
-        };
+        public void WritePublicKeyStruct(PublicKeyStruct value) {
+            Reserved(sizeof(Secp256k1.Math.U256) * 2);
+            value.X.CopyTo(WriteSpan[..sizeof(Secp256k1.Math.U256)], bigEndian: true);
+            value.Y.CopyTo(WriteSpan[sizeof(Secp256k1.Math.U256)..], bigEndian: true);
+            Index += sizeof(Secp256k1.Math.U256) * 2;
+        }
 
-        public readonly static Writer<ulong> VarUInt = (data, value) => data.WriteVarUInt(value);
+        public void WriteSignature(Signature value) {
+            Reserved(sizeof(Secp256k1.Math.U256) * 2);
+            value.GetR(WriteSpan[..sizeof(Secp256k1.Math.U256)]);
+            value.GetS(WriteSpan[sizeof(Secp256k1.Math.U256)..]);
+            Index += sizeof(Secp256k1.Math.U256) * 2;
+        }
 
-        public readonly static Writer<byte[]> TxData = (data, value) => {
+        public void WriteVarUInt(ulong value) {
+            Reserved(9);
+            Index += WriteSpan.WriteVarUInt(value);
+        }
+
+        public void WriteTxData(byte[] value) {
             if (value.Length > 524288) throw new InvalidOperationException();
-            int length = data.WriteVarUInt((ulong)value.Length);
-            value.CopyTo(data[length..]);
-            return length + value.Length;
-        };
+            Reserved(9 + value.Length);
+            int length = WriteSpan.WriteVarUInt((ulong)value.Length);
+            value.CopyTo(WriteSpan[length..]);
+            Index += length + value.Length;
+        }
 
-        public readonly static Writer<ulong> U64LittleEndian = (data, value) => {
-            if (!BitConverter.IsLittleEndian) value = BinaryPrimitives.ReverseEndianness(value);
-            BinaryPrimitives.WriteUInt64LittleEndian(data, value);
-            return sizeof(ulong);
-        };
+        public void WriteU64LittleEndian(ulong value) {
+            Reserved(sizeof(ulong));
+            BinaryPrimitives.WriteUInt64LittleEndian(WriteSpan, value);
+            Index += sizeof(ulong);
+        }
 
-        public readonly static Writer<Address[]?> Addresses = (data, value) => {
-            value ??= Array.Empty<Address>();
-            data[0] = (byte)value.Length;
-            MemoryMarshal.Cast<Address, byte>(value).CopyTo(data[1..]);
-            return 1 + value.Length * sizeof(Address);
-        };
+        public void WriteAddresses(ReadOnlySpan<Bytes<Address>> value) {
+            if (value.Length >= 256) throw new InvalidOperationException();
+            Reserved(1 + value.Length * sizeof(Address));
+            WriteSpan[0] = (byte)value.Length;
+            MemoryMarshal.Cast<Bytes<Address>, byte>(value).CopyTo(WriteSpan[1..]);
+            Index += 1 + value.Length * sizeof(Address);
+        }
 
-        public readonly static Writer<bool> Bool = (data, value) => {
-            data[0] = (byte)(value ? 0 : 1);
-            return 1;
-        };
+        public void WriteBool(bool value) {
+            Reserved(1);
+            WriteSpan[0] = (byte)(value ? 0 : 1);
+            Index += 1;
+        }
     }
 }

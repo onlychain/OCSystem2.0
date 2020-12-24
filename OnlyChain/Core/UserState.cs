@@ -21,7 +21,7 @@ namespace OnlyChain.Core {
         /// <summary>
         /// 投票给的地址
         /// </summary>
-        public Address[]? VoteAddresses;
+        public Bytes<Address>[]? VoteAddresses;
         /// <summary>
         /// 超级节点竞选质押代币数
         /// </summary>
@@ -45,6 +45,6 @@ namespace OnlyChain.Core {
         /// <summary>
         /// 合约内存（不包含字节码和元数据）
         /// </summary>
-        public object? ContractMemory;
+        public MerklePatriciaTree<Bytes<U256>, Bytes<U256>, Bytes<Hash256>>? ContractMemory;
     }
 }

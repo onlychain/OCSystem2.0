@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 
 namespace OnlyChain.Core {
-    public sealed class BlockDictionary : IndexedDictionary<Hash<Size256>, Block> {
+    public sealed class BlockDictionary : IndexedDictionary<Bytes<Hash256>, Block> {
         private bool saving = false;
         private readonly FileStream fileStream;
         private int prevHashCount = 0;
@@ -18,13 +18,13 @@ namespace OnlyChain.Core {
         unsafe public BlockDictionary(string filename) {
             if (File.Exists(filename)) {
                 using var stream = File.OpenRead(filename);
-                var hashCount = Math.DivRem(stream.Length, sizeof(Hash<Size256>), out var rem);
+                var hashCount = Math.DivRem(stream.Length, sizeof(Hash256), out var rem);
                 if (rem != 0 || hashCount > int.MaxValue) throw new ArgumentException("无效的hashes文件或已损坏", nameof(filename));
                 prevHashCount = (int)hashCount;
                 hashTable = new HashTable(Math.Max((int)hashCount, 1000));
-                Hash<Size256> hash;
+                Bytes<Hash256> hash;
                 while (hashCount-- > 0) {
-                    stream.Read(new Span<byte>(&hash, sizeof(Hash<Size256>)));
+                    stream.Read(new Span<byte>(&hash, sizeof(Hash256)));
                     hashTable.Add(&hash);
                 }
             } else {
@@ -43,7 +43,7 @@ namespace OnlyChain.Core {
                 if (prevHashCount >= currentCount) return;
 
                 for (int i = prevHashCount; i < currentCount; i++) {
-                    fileStream.Write(new ReadOnlySpan<byte>(hashTable[i], sizeof(Hash<Size256>)));
+                    fileStream.Write(new ReadOnlySpan<byte>(hashTable[i], sizeof(Hash256)));
                 }
                 prevHashCount = currentCount;
             } finally {
@@ -51,7 +51,7 @@ namespace OnlyChain.Core {
             }
         }
 
-        public override int Add(Hash<Size256> hash) {
+        public override int Add(Bytes<Hash256> hash) {
             int index = base.Add(hash);
             Save();
             return index;

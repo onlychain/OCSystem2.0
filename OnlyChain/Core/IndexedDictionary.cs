@@ -55,7 +55,7 @@ namespace OnlyChain.Core {
 
         unsafe public int Set(TKey key, TValue value) {
             int index = hashTable.GetIndex(&key);
-            if (index < 0) throw new KeyNotFoundException();
+            if (index < 0) return Add(key, value);
             values[index] = value;
             return index;
         }

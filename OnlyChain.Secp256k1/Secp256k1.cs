@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Security.Cryptography;
-using System.Threading.Tasks;
 using OnlyChain.Secp256k1.Math;
 
 namespace OnlyChain.Secp256k1 {
@@ -22,9 +21,7 @@ namespace OnlyChain.Secp256k1 {
             do {
                 rng.GetBytes(privateKey);
                 k = new U256(privateKey, bigEndian: true);
-            } while (k.IsZero || k >= ModN.N);
-
-            Clear(&k);
+            } while (k.IsZero || k >= U256N.N);
         }
 
         /// <summary>
@@ -44,11 +41,11 @@ namespace OnlyChain.Secp256k1 {
         /// <returns></returns>
         unsafe public static PublicKey CreatePublicKey(ReadOnlySpan<byte> privateKey) {
             if (privateKey.Length != 32) throw new InvalidPrivateKeyException("私钥长度必须是32字节");
+
             var k = new U256(privateKey, bigEndian: true);
-            if (k.IsZero || k >= ModN.N) throw new InvalidPrivateKeyException();
-            var retPoint = ModP.MulG(k);
-            Clear(&k);
-            return new PublicKey(ModP.ToU256(retPoint.X), ModP.ToU256(retPoint.Y));
+            if (k.IsZero || k >= U256N.N) throw new InvalidPrivateKeyException();
+            var retPoint = (Point)EllipticCurve.MulG(k);
+            return new PublicKey(retPoint.X, retPoint.Y);
         }
 
         /// <summary>
@@ -60,20 +57,19 @@ namespace OnlyChain.Secp256k1 {
         unsafe public static Signature Sign(ReadOnlySpan<byte> privateKey, ReadOnlySpan<byte> message) {
             if (privateKey.Length != 32) throw new InvalidPrivateKeyException("私钥长度必须是32字节");
             if (message.Length != 32) throw new InvalidMessageException("消息长度必须是32字节");
-            var dA = ModN.U256(privateKey, bigEndian: true);
-            var msg = ModN.U256(message, bigEndian: true);
-            var tempPrivKey = CreatePrivateKey();
-            var tempPubKey = CreatePublicKey(tempPrivKey);
-            var k = new U256(tempPrivKey, bigEndian: true);
-            var S = ModN.Div(ModN.Add(msg, ModN.Mul(dA, tempPubKey.x)), k);
-            tempPrivKey.AsSpan().Clear();
-            Clear(&dA);
-            Clear(&k);
-            return new Signature(tempPubKey.x, S);
-        }
 
-        public static Task<Signature> SignAsync(ReadOnlyMemory<byte> privateKey, ReadOnlyMemory<byte> message) {
-            return Task.Run(() => Sign(privateKey.Span, message.Span));
+            var dA = new U256N(privateKey);
+            var msg = new U256N(message);
+            Span<byte> tempPrivateKey = stackalloc byte[32];
+            CreatePrivateKey(tempPrivateKey);
+            var k = new U256N(tempPrivateKey);
+            var p = (Point)EllipticCurve.MulG(k);
+            U256N R = p.X.Value;
+            U256N S = (msg + dA * R) / k;
+            if (p.Y.Value.v0 % 2 != 0) {
+                S = -S;
+            }
+            return new Signature(R, S);
         }
 
         /// <summary>
@@ -85,16 +81,13 @@ namespace OnlyChain.Secp256k1 {
         /// <returns></returns>
         public static bool Verify(PublicKey publicKey, ReadOnlySpan<byte> message, Signature signature) {
             if (message.Length != 32) throw new InvalidMessageException("消息长度必须是32字节");
-            var msg = ModN.U256(message, bigEndian: true);
-            var S_inv = ModN.Inverse(signature.S);
-            var u1 = ModN.Mul(S_inv, msg);
-            var u2 = ModN.Mul(S_inv, signature.R);
-            var P = ModP.Add(ModP.MulG(u1), ModP.Mul(publicKey.ToPoint(), u2));
-            return ModP.Equal(P.X, signature.R);
-        }
 
-        public static Task<bool> VerifyAsync(PublicKey publicKey, ReadOnlyMemory<byte> message, Signature signature) {
-            return Task.Run(() => Verify(publicKey, message.Span, signature));
+            var msg = new U256N(message);
+            var S_inv = ~(U256N)signature.S;
+            var u1 = S_inv * msg;
+            var u2 = S_inv * signature.R;
+            var P = EllipticCurve.MulG(u1) + new JacobianPoint(publicKey.X, publicKey.Y) * u2;
+            return P.X == signature.R * (P.Z ^ 2);
         }
 
         /// <summary>
@@ -105,12 +98,35 @@ namespace OnlyChain.Secp256k1 {
         /// <returns></returns>
         unsafe public static EncryptionKey CreateEncryptionKey(ReadOnlySpan<byte> privateKey, PublicKey publicKey) {
             if (privateKey.Length != 32) throw new InvalidPrivateKeyException("私钥长度必须是32字节");
-            var k = new U256(privateKey, bigEndian: true);
-            if (k.IsZero || k >= ModN.N) throw new InvalidPrivateKeyException();
 
-            var p = ModP.Mul(publicKey.ToPoint(), k);
-            Clear(&k);
-            return new EncryptionKey(ModP.ToU256(p.X), ModP.ToU256(p.Y));
+            var k = new U256(privateKey);
+            if (k.IsZero || k >= U256N.N) throw new InvalidPrivateKeyException();
+            var p = (Point)(new JacobianPoint(publicKey.X, publicKey.Y) * k);
+            return new EncryptionKey(p.X, p.Y);
+        }
+
+        /// <summary>
+        /// 从(消息,签名)恢复公钥
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="signature"></param>
+        /// <returns></returns>
+        unsafe public static PublicKey RecoverPublicKey(ReadOnlySpan<byte> message, Signature signature) {
+            if (message.Length != 32) throw new InvalidMessageException("消息长度必须是32字节");
+
+            U256N s = signature.S;
+            var m = new U256N(message);
+            var rY = EllipticCurve.GetY(signature.R);
+            if (rY.Value.v0 % 2 != 0) {
+                s = -s;
+            }
+
+            var rP = new JacobianPoint(signature.R, rY);
+            var r_inv = ~new U256N(signature.R);
+            var u1 = EllipticCurve.MulG(-m * r_inv);
+            var u2 = s * r_inv;
+            var p = (Point)(rP * u2 + u1);
+            return new PublicKey(p.X, p.Y);
         }
     }
 }

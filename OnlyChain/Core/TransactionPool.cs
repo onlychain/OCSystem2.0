@@ -13,13 +13,13 @@ namespace OnlyChain.Core {
         // 按每个账户平均GasPrice排序
 
         private readonly object locker = new object();
-        private readonly Dictionary<Address, SortedSet<Transaction>> allTransactions = new Dictionary<Address, SortedSet<Transaction>>();
-        private readonly SortedSet<Address> sortedTransactions;
+        private readonly Dictionary<Bytes<Address>, SortedSet<Transaction>> allTransactions = new Dictionary<Bytes<Address>, SortedSet<Transaction>>();
+        private readonly SortedSet<Bytes<Address>> sortedTransactions;
 
         public int Count { get; private set; }
 
         public TransactionPool() {
-            sortedTransactions = new SortedSet<Address>(new AddressComparer(allTransactions));
+            sortedTransactions = new SortedSet<Bytes<Address>>(new AddressComparer(allTransactions));
         }
 
         public void Push(Transaction tx) {
@@ -43,7 +43,7 @@ namespace OnlyChain.Core {
             lock (locker) {
                 if (Count is 0) return null;
 
-                Address first = sortedTransactions.Min;
+                Bytes<Address> first = sortedTransactions.Min;
                 sortedTransactions.Remove(first);
                 SortedSet<Transaction> list = allTransactions[first];
                 Transaction result = list.Min!;
@@ -75,12 +75,12 @@ namespace OnlyChain.Core {
         }
 
 
-        sealed class AddressComparer : IComparer<Address> {
-            private readonly IReadOnlyDictionary<Address, SortedSet<Transaction>> map;
+        sealed class AddressComparer : IComparer<Bytes<Address>> {
+            private readonly IReadOnlyDictionary<Bytes<Address>, SortedSet<Transaction>> map;
 
-            public AddressComparer(IReadOnlyDictionary<Address, SortedSet<Transaction>> map) => this.map = map;
+            public AddressComparer(IReadOnlyDictionary<Bytes<Address>, SortedSet<Transaction>> map) => this.map = map;
 
-            public int Compare(Address x, Address y) {
+            public int Compare(Bytes<Address> x, Bytes<Address> y) {
                 if (x == y) return 0;
                 double xVal = 0, yVal = 0;
                 if (map.TryGetValue(x, out var xList)) {

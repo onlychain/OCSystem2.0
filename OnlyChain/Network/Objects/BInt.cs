@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Threading.Tasks;
 using OnlyChain.Core;
 
 namespace OnlyChain.Network.Objects {
@@ -9,7 +10,7 @@ namespace OnlyChain.Network.Objects {
         public BInt(long value) : base(value) {
         }
 
-        public override void Write(Stream stream) {
+        protected override void Write(Stream stream) {
             stream.WriteByte(PrefixChar);
             stream.WriteVarInt(Value);
         }

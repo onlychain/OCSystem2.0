@@ -64,7 +64,7 @@ namespace OnlyChain.Database {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate void leveldb_get_callback(void* value, size_t value_length);
 
-        const string Dll = @"leveldb.dll";
+        const string Dll = "leveldb";
 
 
 

@@ -5,8 +5,8 @@ using OnlyChain.Secp256k1;
 using System.Threading;
 
 namespace OnlyChain.Core {
-    public sealed class UserDictionary : IndexedDictionary<Address, PublicKeyStruct> {
-        unsafe static readonly int StructSize = sizeof(Address) + sizeof(PublicKeyStruct);
+    public sealed class UserDictionary : IndexedDictionary<Bytes<Address>, PublicKeyStruct> {
+        unsafe static readonly int StructSize = sizeof(Bytes<Address>) + sizeof(PublicKeyStruct);
 
         private int saving = 0;
         private readonly FileStream fileStream;
@@ -26,10 +26,10 @@ namespace OnlyChain.Core {
                 prevHashCount = (int)hashCount;
                 hashTable = new HashTable(Math.Max((int)hashCount, 1000));
                 values = new List<PublicKeyStruct>(Math.Max((int)hashCount, 1000));
-                Address address;
+                Bytes<Address> address;
                 PublicKeyStruct publicKey;
                 while (hashCount-- > 0) {
-                    stream.Read(new Span<byte>(&address, sizeof(Address)));
+                    stream.Read(new Span<byte>(&address, sizeof(Bytes<Address>)));
                     stream.Read(new Span<byte>(&publicKey, sizeof(PublicKeyStruct)));
                     hashTable.Add(&address);
                     values.Add(publicKey);
@@ -50,7 +50,7 @@ namespace OnlyChain.Core {
                 if (prevHashCount >= currentCount) return;
 
                 for (int i = prevHashCount; i < currentCount; i++) {
-                    fileStream.Write(new ReadOnlySpan<byte>(hashTable[i], sizeof(Address)));
+                    fileStream.Write(new ReadOnlySpan<byte>(hashTable[i], sizeof(Bytes<Address>)));
                     PublicKeyStruct publicKey = values[i];
                     fileStream.Write(new ReadOnlySpan<byte>(&publicKey, sizeof(PublicKeyStruct)));
                 }
@@ -60,7 +60,7 @@ namespace OnlyChain.Core {
             }
         }
 
-        unsafe public Address GetAddress(int index) => *hashTable[index];
+        unsafe public Bytes<Address> GetAddress(int index) => *hashTable[index];
 
         public PublicKey GetPublicKey(int index) => values[index];
 

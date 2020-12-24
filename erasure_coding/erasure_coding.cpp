@@ -4,7 +4,11 @@
 #include <memory.h>
 #include <immintrin.h>
 
+#ifdef _WINDOWS
 #define EXPORT __declspec(dllexport)
+#else
+#define EXPORT __attribute__((visibility("default")))
+#endif
 
 template<size_t I>
 static bool check_indexes(int indexCount, const int(*indexes)[2]) noexcept {

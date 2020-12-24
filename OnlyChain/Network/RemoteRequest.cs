@@ -12,9 +12,9 @@ namespace OnlyChain.Network {
     public sealed class RemoteRequest {
         public BDict Request { get; }
         public IPEndPoint Remote { get; }
-        public Address Address { get; }
+        public Bytes<Address> Address { get; }
 
-        internal RemoteRequest(BDict request, IPEndPoint remote, in Address senderAddress) {
+        internal RemoteRequest(BDict request, IPEndPoint remote, in Bytes<Address> senderAddress) {
             Request = request;
             Remote = remote;
             Address = senderAddress;

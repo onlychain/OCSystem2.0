@@ -34,7 +34,7 @@ namespace OnlyChain.Database {
         }
 
         public bool Get(ReadOnlySpan<byte> key, Span<byte> value, LevelDBReadOptions? options = null) {
-            options ??= LevelDBReadOptions.Default;
+            options ??= LevelDBReadOptions.FillCacheOptions;
             fixed (byte* pKey = key)
             fixed (byte* pValue = value) {
                 IntPtr tmpValuePointer = (IntPtr)pValue;
@@ -48,18 +48,30 @@ namespace OnlyChain.Database {
             }
         }
 
-        public byte[]? Get(ReadOnlySpan<byte> key, LevelDBReadOptions? options = null) {
-            options ??= LevelDBReadOptions.Default;
+        public bool Get<T>(ReadOnlySpan<byte> key, out T value, LevelDBReadOptions? options = null) where T : unmanaged {
+            fixed (T* p = &value) {
+                return Get(key, new Span<byte>(p, sizeof(T)), options);
+            }
+        }
+
+
+        public T[]? Get<T>(ReadOnlySpan<byte> key, LevelDBReadOptions? options = null) where T : unmanaged {
+            options ??= LevelDBReadOptions.FillCacheOptions;
             fixed (byte* pKey = key) {
-                byte[]? result = null;
+                T[]? result = null;
                 Native.get(nativePointer, options.nativePointer, pKey, (size_t)key.Length, (val, valLength) => {
                     if ((ulong)valLength > int.MaxValue) throw new InvalidOperationException("取出来的值太大");
-                    result = new byte[(int)valLength];
-                    new ReadOnlySpan<byte>(val, (int)valLength).CopyTo(result);
+                    if ((int)valLength % sizeof(T) != 0) throw new InvalidOperationException("值未对齐");
+                    result = new T[(int)valLength / sizeof(T)];
+                    new ReadOnlySpan<T>(val, (int)valLength / sizeof(T)).CopyTo(result);
                 }, out IntPtr err);
                 err.FreeTryThrow();
                 return result;
             }
+        }
+
+        public byte[]? Get(ReadOnlySpan<byte> key, LevelDBReadOptions? options = null) {
+            return Get<byte>(key, options);
         }
 
         public void Delete(ReadOnlySpan<byte> key, bool sync = false) {

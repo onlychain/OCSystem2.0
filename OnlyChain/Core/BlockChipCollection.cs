@@ -18,9 +18,9 @@ namespace OnlyChain.Core {
         private int writeCount = 0;
         private bool isReadOnly = false;
 
-        public readonly Address Address;
+        public readonly Bytes<Address> Address;
         public readonly PublicKey PublicKey;
-        public readonly Hash<Size160> Id;
+        public readonly Bytes<Hash160> Id;
         public readonly int TotalCount;
         public readonly int RestoreCount;
         public readonly int ChipDataBytes;
@@ -28,7 +28,7 @@ namespace OnlyChain.Core {
 
         public bool CanRestore { get; private set; } = false;
 
-        public BlockChipCollection(BlockChip firstChip, Address address, PublicKey publicKey) {
+        public BlockChipCollection(BlockChip firstChip, Bytes<Address> address, PublicKey publicKey) {
             Id = firstChip.Id;
             TotalCount = firstChip.TotalCount;
             RestoreCount = firstChip.RestoreCount;
@@ -55,7 +55,7 @@ namespace OnlyChain.Core {
                 if (blockChip.TotalCount != TotalCount) goto Invalid;
                 if (blockChip.Data.Length != ChipDataBytes) goto Invalid;
                 if (blockChip.BlockBytes != BlockBytes) goto Invalid;
-                if (datas[blockChip.Index] is { }) goto Invalid;
+                if (datas[blockChip.Index] is not null) goto Invalid;
                 if (blockChip.Verify(PublicKey) is false) goto Invalid;
 
                 datas[blockChip.Index] = blockChip.Data;
@@ -74,15 +74,15 @@ namespace OnlyChain.Core {
             throw new InvalidBlockChipException();
         }
 
-        public async Task<Block> RestoreAsync() {
+        public async ValueTask<Block> RestoreAsync() {
             await restoreTaskSource.Task;
             return Restore();
         }
 
         unsafe private Block Restore() {
-            byte[]?[] datas = (byte[]?[])this.datas.Clone();
+            byte[]?[] datas = this.datas[..];
             var mapIndexList = new List<ErasureCodingIndex>();
-            var mapIndexes = stackalloc int[RestoreCount];
+            Span<int> mapIndexes = stackalloc int[RestoreCount];
             int ecPointer = 0;
             for (int i = 0; i < RestoreCount; i++) {
                 if (datas[i] is null) {
@@ -96,8 +96,8 @@ namespace OnlyChain.Core {
 
             byte[] buffer = new byte[RestoreCount * ChipDataBytes];
             int dstPointer = 0;
-            for (int i = 0; i < RestoreCount; i++) {
-                for (int j = 0; j < ChipDataBytes; j++) {
+            for (int j = 0; j < ChipDataBytes; j++) {
+                for (int i = 0; i < RestoreCount; i++) {
                     buffer[dstPointer++] = datas[mapIndexes[i]]![j];
                 }
             }

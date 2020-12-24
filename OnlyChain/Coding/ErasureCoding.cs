@@ -50,8 +50,7 @@ namespace OnlyChain.Coding {
                     errorCode = NativeEncode(pData, data.Length, pEC, erasureCode.Length, dataStride, erasureCodeStride);
                 }
                 if (errorCode == 0) return;
-                throw errorCode switch
-                {
+                throw errorCode switch {
                     1 => new ArgumentOutOfRangeException(nameof(dataStride)),
                     2 => new ArgumentOutOfRangeException(nameof(erasureCodeStride)),
                     3 => new ArgumentException($"{nameof(data)}的字节数必须是{nameof(dataStride)}的整数倍"),
@@ -69,6 +68,8 @@ namespace OnlyChain.Coding {
         /// <param name="stride">原始数据的跨度，大于0且小于255。<paramref name="dataWithEC"/>长度必须是<paramref name="stride"/>的整数倍</param>
         /// <param name="indexes">指定每个跨度缺失的数据索引以及代替的纠错码索引</param>
         public static void Decode(Span<byte> dataWithEC, int stride, ReadOnlySpan<ErasureCodingIndex> indexes) {
+            if (indexes.IsEmpty) return;
+
             fixed (byte* pDataWithEC = dataWithEC)
             fixed (ErasureCodingIndex* pIndexes = indexes) {
                 int errorCode;
@@ -80,8 +81,7 @@ namespace OnlyChain.Coding {
                     errorCode = NativeDecode(pDataWithEC, dataWithEC.Length, stride, pIndexes, indexes.Length);
                 }
                 if (errorCode == 0) return;
-                throw errorCode switch
-                {
+                throw errorCode switch {
                     1 => new ArgumentOutOfRangeException(nameof(stride)),
                     2 => new ArgumentOutOfRangeException(nameof(indexes), $"{nameof(indexes)}数量过多"),
                     3 => new ArgumentException($"{nameof(dataWithEC)}的字节数必须是{nameof(stride)}的整数倍"),

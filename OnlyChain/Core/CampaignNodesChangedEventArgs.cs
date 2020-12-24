@@ -7,10 +7,10 @@ using System.Collections.Immutable;
 
 namespace OnlyChain.Core {
     public sealed class CampaignNodesChangedEventArgs : EventArgs {
-        public SortedList<Address, SuperNode?> Old { get; }
-        public SortedList<Address, SuperNode?> New { get; }
+        public SortedList<Bytes<Address>, SuperNode?> Old { get; }
+        public SortedList<Bytes<Address>, SuperNode?> New { get; }
 
-        public CampaignNodesChangedEventArgs(SortedList<Address, SuperNode?> old, SortedList<Address, SuperNode?> @new) {
+        public CampaignNodesChangedEventArgs(SortedList<Bytes<Address>, SuperNode?> old, SortedList<Bytes<Address>, SuperNode?> @new) {
             Old = old;
             New = @new;
         }

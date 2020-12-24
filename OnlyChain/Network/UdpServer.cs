@@ -22,10 +22,10 @@ using System.Runtime.InteropServices;
 namespace OnlyChain.Network {
     public sealed class UdpServer : IAsyncDisposable {
         static int requestCancelCount = 0;
-        static readonly Timer requestCancelCounterTimer = new Timer(delegate {
-            var count = Interlocked.Exchange(ref requestCancelCount, 0);
-            Console.WriteLine("cancel: " + count);
-        }, null, TimeSpan.FromSeconds(3.5), TimeSpan.FromSeconds(3.5));
+        //static readonly Timer requestCancelCounterTimer = new Timer(delegate {
+        //    var count = Interlocked.Exchange(ref requestCancelCount, 0);
+        //    Console.WriteLine("cancel: " + count);
+        //}, null, TimeSpan.FromSeconds(3.5), TimeSpan.FromSeconds(3.5));
 
         /// <summary>
         /// 用于管理本地请求的数据结构
@@ -36,9 +36,10 @@ namespace OnlyChain.Network {
             private readonly List<LocalRequest?> requests = new List<LocalRequest?>(128);
             private ulong minIndex, autoIndex;
 
-            public RequestList() {
-                random.NextBytes(MemoryMarshal.CreateSpan(ref Unsafe.As<ulong, byte>(ref autoIndex), sizeof(ulong)));
-                autoIndex >>= 1;
+            unsafe public RequestList() {
+                ulong t;
+                lock (random) random.NextBytes(new Span<byte>(&t, sizeof(ulong)));
+                autoIndex = t >> 1;
                 minIndex = autoIndex;
             }
 
@@ -99,7 +100,7 @@ namespace OnlyChain.Network {
                     Monitor.Enter(requests);
                 }
                 try {
-                    var filterTime = DateTime.Now - timeout;
+                    var filterTime = DateTime.UtcNow - timeout;
                     int i = 0;
                     for (; i < requests.Count; i++) {
                         if (requests[i] is LocalRequest r && r.DateTime > filterTime) {
@@ -127,7 +128,6 @@ namespace OnlyChain.Network {
 
         private readonly IClient client;
         private readonly Socket udpSocket;
-        private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
         private readonly Task[] serverTasks = new Task[4];
         private readonly Dictionary<string, Func<RemoteRequest, Task>> requestHandlers = new Dictionary<string, Func<RemoteRequest, Task>>();
         private readonly RequestList requestList = new RequestList();
@@ -135,61 +135,22 @@ namespace OnlyChain.Network {
         private int processCount = 0;
         private readonly Timer processCountTask;
 
-        public IPEndPoint IPEndPoint => (IPEndPoint)udpSocket.LocalEndPoint;
+        public IPEndPoint IPEndPoint => (IPEndPoint)udpSocket.LocalEndPoint!;
 
         public int TPS { get; private set; }
 
-        public UdpServer(IClient client, IPEndPoint udpEndPoint) {
+        public UdpServer(IClient client) {
             this.client = client;
 
-            #region 通过反射将远程请求Handler绑定到Client方法上
-            Type type = client.GetType();
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)) {
-                if (!(method.GetCustomAttribute<CommandHandlerAttribute>() is CommandHandlerAttribute attr)) continue;
-                var paramTypes = method.GetParameters().Select(p => p.ParameterType).ToArray();
-                if (!(paramTypes is { Length: 1 }) || paramTypes[0] != typeof(RemoteRequest))
-                    throw new TypeLoadException($"{type}的{method.Name}方法签名错误");
-
-                if (method.ReturnType == typeof(BDict)) {
-                    var handler = (Func<RemoteRequest, BDict?>)method.CreateDelegate(typeof(Func<RemoteRequest, BDict?>), client);
-                    requestHandlers.Add(attr.Command, dict => Task.FromResult(handler(dict)));
-                } else if (method.ReturnType == typeof(ValueTask<BDict>)) {
-                    var handler = (Func<RemoteRequest, ValueTask<BDict?>>)method.CreateDelegate(typeof(Func<RemoteRequest, ValueTask<BDict?>>), client);
-                    requestHandlers.Add(attr.Command, dict => handler(dict).AsTask());
-                } else if (method.ReturnType == typeof(Task<BDict>)) {
-                    var handler = (Func<RemoteRequest, Task<BDict?>>)method.CreateDelegate(typeof(Func<RemoteRequest, Task<BDict?>>), client);
-                    requestHandlers.Add(attr.Command, dict => handler(dict));
-                } else if (method.ReturnType == typeof(void)) {
-                    var handler = (Action<RemoteRequest>)method.CreateDelegate(typeof(Action<RemoteRequest>), client);
-                    requestHandlers.Add(attr.Command, dict => {
-                        handler(dict);
-                        return Task.CompletedTask;
-                    });
-                } else if (method.ReturnType == typeof(ValueTask)) {
-                    var handler = (Func<RemoteRequest, ValueTask>)method.CreateDelegate(typeof(Func<RemoteRequest, ValueTask>), client);
-                    requestHandlers.Add(attr.Command, async dict => await handler(dict));
-                } else if (method.ReturnType == typeof(Task)) {
-                    var handler = (Func<RemoteRequest, Task>)method.CreateDelegate(typeof(Func<RemoteRequest, Task>), client);
-                    requestHandlers.Add(attr.Command, handler);
-                } else {
-                    throw new TypeLoadException($"{type}的{method.Name}方法签名错误");
-                }
-            }
-            #endregion
-
             #region Socket相关
-            udpSocket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp);
-            udpSocket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
-            udpSocket.Bind(udpEndPoint);
+            udpSocket = new Socket(SocketType.Dgram, ProtocolType.Udp);
+            //udpSocket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
+            udpSocket.Bind(client.EndPoint);
             const int IOC_IN = unchecked((int)0x80000000);
             const int IOC_VENDOR = 0x18000000;
             const int SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
             udpSocket.IOControl(SIO_UDP_CONNRESET, new[] { Convert.ToByte(false) }, null);
             #endregion
-
-            for (int i = 0; i < serverTasks.Length; i++) {
-                serverTasks[i] = StartReceive();
-            }
 
             processCountTask = new Timer(delegate {
                 TPS = processCount;
@@ -198,19 +159,56 @@ namespace OnlyChain.Network {
             }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         }
 
+        public void Start() {
+            #region 通过反射将远程请求Handler绑定到Client方法上
+            Type type = client.P2P.GetType();
+            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)) {
+                if (method.GetCustomAttribute<CommandHandlerAttribute>() is not CommandHandlerAttribute attr) continue;
+                var paramTypes = method.GetParameters().Select(p => p.ParameterType).ToArray();
+                if (!(paramTypes is { Length: 1 }) || paramTypes[0] != typeof(RemoteRequest)) continue;
+
+                if (method.ReturnType == typeof(BDict)) {
+                    var handler = (Func<RemoteRequest, BDict?>)method.CreateDelegate(typeof(Func<RemoteRequest, BDict?>), client.P2P);
+                    requestHandlers.Add(attr.Command, dict => Task.FromResult(handler(dict)));
+                } else if (method.ReturnType == typeof(ValueTask<BDict>)) {
+                    var handler = (Func<RemoteRequest, ValueTask<BDict?>>)method.CreateDelegate(typeof(Func<RemoteRequest, ValueTask<BDict?>>), client.P2P);
+                    requestHandlers.Add(attr.Command, dict => handler(dict).AsTask());
+                } else if (method.ReturnType == typeof(Task<BDict>)) {
+                    var handler = (Func<RemoteRequest, Task<BDict?>>)method.CreateDelegate(typeof(Func<RemoteRequest, Task<BDict?>>), client.P2P);
+                    requestHandlers.Add(attr.Command, dict => handler(dict));
+                } else if (method.ReturnType == typeof(void)) {
+                    var handler = (Action<RemoteRequest>)method.CreateDelegate(typeof(Action<RemoteRequest>), client.P2P);
+                    requestHandlers.Add(attr.Command, dict => {
+                        handler(dict);
+                        return Task.CompletedTask;
+                    });
+                } else if (method.ReturnType == typeof(ValueTask)) {
+                    var handler = (Func<RemoteRequest, ValueTask>)method.CreateDelegate(typeof(Func<RemoteRequest, ValueTask>), client.P2P);
+                    requestHandlers.Add(attr.Command, async dict => await handler(dict));
+                } else if (method.ReturnType == typeof(Task)) {
+                    var handler = (Func<RemoteRequest, Task>)method.CreateDelegate(typeof(Func<RemoteRequest, Task>), client.P2P);
+                    requestHandlers.Add(attr.Command, handler);
+                }
+            }
+            #endregion
+
+            for (int i = 0; i < serverTasks.Length; i++) {
+                serverTasks[i] = StartReceive();
+            }
+        }
+
         private async Task StartReceive() {
             EndPoint remoteEP = new IPEndPoint(IPAddress.IPv6None, 0);
             var buffer = new byte[4096];
-            CancellationToken cancellationToken = cancellationTokenSource.Token;
-            while (!cancellationToken.IsCancellationRequested) {
+            while (!client.CloseCancellationToken.IsCancellationRequested) {
                 try {
                     var result = await udpSocket.ReceiveFromAsync(buffer, SocketFlags.None, remoteEP);
-                    var obj = Bencode.Decode(buffer.AsSpan(0, result.ReceivedBytes), client.NetworkPrefix);
+                    var obj = Bencode.Decode(new MemoryStream(buffer, 0, result.ReceivedBytes), client.NetworkPrefix, maxReadSize: 2048);
 
-                    if (!(obj is BDict dict)) continue; // 不是字典类型
+                    if (obj is not BDict dict) continue; // 不是字典类型
 
-                    if (!(dict["i"] is BUInt(ulong packageIndex))) continue; // 不存在i(包序号)字段
-                    if (!(dict["a"] is BAddress(Address senderAddress))) continue; // 不存在a(发送者id)字段
+                    if (dict["i"] is not BUInt(ulong packageIndex)) continue; // 不存在i(包序号)字段
+                    if (dict["a"] is not BAddress(Bytes<Address> senderAddress)) continue; // 不存在a(发送者id)字段
                     if (dict["c"] is BString(string cmd)) { // 存在c(命令)字段，表示远端请求
                         if (!requestHandlers.TryGetValue(cmd, out var handler)) continue;
 
@@ -223,7 +221,7 @@ namespace OnlyChain.Network {
                         } else if (responseTask is Task<BDict?> hasResultTask) {
                             _ = hasResultTask.ContinueWith(task => {
                                 try {
-                                    if (cancellationTokenSource.IsCancellationRequested) return;
+                                    if (client.CloseCancellationToken.IsCancellationRequested) return;
                                     var response = task.Result;
                                     if (response is null) return;
                                     response["i"] = packageIndex;
@@ -238,6 +236,7 @@ namespace OnlyChain.Network {
                             request.Response.TrySetResult(new RemoteResponse(packageIndex, senderAddress, (IPEndPoint)result.RemoteEndPoint, dict));
                         }
                     }
+                } catch (TaskCanceledException) {
                 } catch {
                 }
             }
@@ -249,14 +248,21 @@ namespace OnlyChain.Network {
             Send(message, remote);
         }
 
-        internal void Send(byte[] message, EndPoint remote) {
-            udpSocket.BeginSendTo(message, 0, message.Length, SocketFlags.None, remote, null, null);
+        internal async void Send(byte[] message, EndPoint remote) {
+            await udpSocket.SendToAsync(message, SocketFlags.None, remote);
         }
 
         public async Task<RemoteResponse> Request(BDict dict, EndPoint remote, int retryCount = 2, CancellationToken cancellationToken = default) {
             if (retryCount < 1) throw new ArgumentOutOfRangeException(nameof(retryCount), "重试次数不能小于1");
 
             int count = 1;
+
+            if (cancellationToken.CanBeCanceled) {
+                var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cancellationToken = cancellationTokenSource.Token;
+                cancellationToken.Register(delegate { count = retryCount; });
+            }
+
         Retry:
             try {
                 var request = requestList.NewRequest(dict, cancellationToken);
@@ -275,7 +281,6 @@ namespace OnlyChain.Network {
 
         async ValueTask Dispose(bool disposing) {
             if (!isDisposed) {
-                cancellationTokenSource.Cancel();
                 try {
                     udpSocket.Shutdown(SocketShutdown.Both);
                 } catch { }
@@ -287,7 +292,6 @@ namespace OnlyChain.Network {
                 if (disposing) {
                     await processCountTask.DisposeAsync();
                     udpSocket.Dispose();
-                    cancellationTokenSource.Dispose();
                     foreach (var task in serverTasks) task.Dispose();
                     GC.SuppressFinalize(this);
                 }

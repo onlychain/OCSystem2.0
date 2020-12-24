@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFramework>net5.0</TargetFramework>
     <Platforms>AnyCPU;x64;x86</Platforms>
     <RootNamespace>Saar.Secp256k1</RootNamespace>
     <AssemblyName>OnlyChain.Secp256k1</AssemblyName>
@@ -32,16 +32,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="secp256k1.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="System.Memory" Version="4.5.3" />
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="4.5.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="u256math.dll">
+    <None Update="secp256k1.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

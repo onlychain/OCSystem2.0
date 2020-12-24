@@ -7,6 +7,7 @@ using System.Text;
 namespace OnlyChain.Database {
     unsafe internal sealed class LevelDBReadOptions : LevelDBObject<Native.leveldb_readoptions_t> {
         public readonly static LevelDBReadOptions Default = new LevelDBReadOptions();
+        public readonly static LevelDBReadOptions FillCacheOptions = new LevelDBReadOptions { FillCache = true };
 
 #pragma warning disable IDE0052 // 删除未读的私有成员
 #pragma warning disable CA2213 // Disposable fields should be disposed

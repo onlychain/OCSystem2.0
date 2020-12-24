@@ -12,34 +12,42 @@ namespace OnlyChain.Model {
     public abstract class AttachData {
         public static AttachData? ParseData(Transaction tx) {
             try {
-                if (tx.To == Address.Zero) {
-                    var deserializer = new Deserializer(tx.Data);
-                    byte cmd = deserializer.Read<byte>();
-                    if (cmd is 0x01) { // 投票，转到0地址，Data里指明投给哪些地址
-                        uint round = deserializer.Read(Deserializer.VarUInt32);
-                        int count = Math.DivRem(tx.Data.Length - deserializer.Index, Address.Size, out int r);
-                        if (r != 0) goto Fail;
+                if (tx.Data is null or { Length: 0 }) return null;
 
-                        return new VoteData(round, deserializer.ReadValues<Address>(count));
-                    } else if (tx.Data is { Length: 1 }) {
-                        if (cmd is 0x02) return new VoteRedemptionData(); // 投票质押手动赎回
-                        if (cmd is 0xff) return new SuperRedemptionData(); // 超级节点质押手动赎回
-                    }
-                } else if (tx.To == Address.Max) {
-                    return new SuperPledgeData();
-                } else {
-                    if (tx.Data.Length >= 5 && tx.Data[0] is 0x0c) {
-                        uint prefix = BinaryPrimitives.ReadUInt32BigEndian(tx.Data.AsSpan(1, 4));
-                        switch (prefix) {
-                            case LockData.Prefix: {
-                                uint unlockTimestamp = BinaryPrimitives.ReadUInt32LittleEndian(tx.Data.AsSpan(5, 4));
-                                return new LockData(unlockTimestamp);
-                            }
-                        }
-                    }
-                    return null;
+                var deserializer = new Deserializer(tx.Data);
+                byte cmd = deserializer.Read<byte>();
+
+                switch (cmd) {
+                    case 0x00: // 自由数据
+                        if (tx.Data.Length > 4096 + 1) goto Fail;
+                        return null;
+                    case 0x01: // 投票
+                        if (tx.To != Bytes<Address>.Empty) goto Fail;
+                        uint round = deserializer.Read(Deserializer.VarUInt32);
+                        int count = Math.DivRem(tx.Data.Length - deserializer.Index, Bytes<Address>.Size, out int r);
+                        if (r != 0) goto Fail;
+                        return new VoteData(round, deserializer.ReadValues<Bytes<Address>>(count));
+                    case 0x02: // 投票赎回
+                        if (tx.To != Bytes<Address>.Empty) goto Fail;
+                        if (tx.Value != 0) goto Fail;
+                        return new VoteRedemptionData();
+                    case 0x03: // 超级节点质押
+                        if (tx.To != Bytes<Address>.Empty) goto Fail;
+                        return new SuperPledgeData();
+                    case 0x04: // 超级节点赎回
+                        if (tx.To != Bytes<Address>.Empty) goto Fail;
+                        if (tx.Value != 0) goto Fail;
+                        return new SuperRedemptionData();
+                    case 0x05: // 锁仓
+                        uint unlockTimestamp = deserializer.Read(Deserializer.VarUInt32);
+                        return new LockData(unlockTimestamp);
+                    case 0xff: // 调用合约
+                        return new ContractInputData(tx.Data.AsMemory(1));
                 }
-            } catch { }
+            } catch {
+
+            }
+
         Fail:
             throw new FormatException();
         }

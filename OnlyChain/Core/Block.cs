@@ -5,24 +5,27 @@ using OnlyChain.Secp256k1;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
 namespace OnlyChain.Core {
-    public sealed class Block {
+    public sealed class Block : IComparable<Block> {
         public uint Version;
         public uint Height;
         /// <summary>
         /// 从0开始，若没有发生跳过出块人的情况，则每次自增2。
         /// </summary>
         public uint Timestamp;
-        public Hash<Size256> HashPrevBlock;
-        public Hash<Size256> HashWorldState;
-        public Hash<Size256> HashTxMerkleRoot;
+        public Bytes<Hash256> HashPrevBlock;
+        public Bytes<Hash256> HashWorldState;
+        public Bytes<Hash256> HashTxMerkleRoot;
+        public Bytes<Address> ProducerAddress;
         public Signature Signature;
 
-        public Hash<Size256> HashSignHeader;
-        public Hash<Size256> Hash;
+        public Bytes<Hash256> HashSignHeader;
+        public Bytes<Hash256> Hash;
+        public PublicKey ProducerPublicKey = null!;
         public Transaction[] Transactions;
 
         /// <remarks>
@@ -57,18 +60,12 @@ namespace OnlyChain.Core {
             }
         }
 
-        public Address ProducerAddress {
-            get {
-                if (Height == 1) throw new InvalidOperationException();
-                BlockState state = PrecommitState ?? CommitState ?? throw new InvalidOperationException();
-                return state.SortedCampaignNodes[SmallRound.IndexInRound];
-            }
-        }
 
+
+#pragma warning disable CS8618 // 不可为 null 的字段未初始化。请考虑声明为可以为 null。
         public Block() {
-            Signature = null!;
-            Transactions = null!;
         }
+#pragma warning restore CS8618 // 不可为 null 的字段未初始化。请考虑声明为可以为 null。
 
         /// <summary>
         /// 解析来自网络的区块（需要外部验证）
@@ -79,9 +76,10 @@ namespace OnlyChain.Core {
             Version = deserializer.Read(Deserializer.VarUInt32);
             Height = deserializer.Read(Deserializer.VarUInt32);
             Timestamp = deserializer.Read(Deserializer.VarUInt32);
-            HashPrevBlock = deserializer.Read<Hash<Size256>>();
-            HashWorldState = deserializer.Read<Hash<Size256>>();
-            HashTxMerkleRoot = deserializer.Read<Hash<Size256>>();
+            HashPrevBlock = deserializer.Read<Bytes<Hash256>>();
+            HashWorldState = deserializer.Read<Bytes<Hash256>>();
+            HashTxMerkleRoot = deserializer.Read<Bytes<Hash256>>();
+            ProducerAddress = deserializer.Read<Bytes<Address>>();
             HashSignHeader = rawData[..deserializer.Index].MessageHash();
             Signature = deserializer.Read(Deserializer.Signature);
 
@@ -101,56 +99,79 @@ namespace OnlyChain.Core {
             }
         }
 
-        unsafe public Block(uint height, uint timestamp, Hash<Size256> hashPrevBlock, ReadOnlySpan<byte> producerPrivateKey, Transaction[] transactions, BlockState commitStatus) {
-            Version = Constants.BlockVersion;
-            Height = height;
-            Timestamp = timestamp;
-            HashPrevBlock = hashPrevBlock;
-            HashWorldState = commitStatus.WorldState.RootHash;
-            HashTxMerkleRoot = commitStatus.Transactions.RootHash;
-            CommitState = commitStatus;
-            Transactions = transactions;
+        //unsafe public Block(uint height, uint timestamp, Bytes<Hash256> hashPrevBlock, ReadOnlySpan<byte> producerPrivateKey, Transaction[] transactions, BlockState commitStatus) {
+        //    Version = Constants.BlockVersion;
+        //    Height = height;
+        //    Timestamp = timestamp;
+        //    HashPrevBlock = hashPrevBlock;
+        //    HashWorldState = commitStatus.WorldState.RootHash;
+        //    HashTxMerkleRoot = commitStatus.Transactions.RootHash;
+        //    CommitState = commitStatus;
+        //    Transactions = transactions;
 
-            Serializer serializer = stackalloc byte[NetworkMaxHeaderBytes()];
-            NetworkSerializeHeaderWithoutSignature(ref serializer);
-            Hash<Size256> signHash = serializer.RawData.MessageHash();
-            Signature = Ecdsa.Sign(producerPrivateKey, signHash);
-            serializer.Write(Serializer.Signature, Signature);
-            Hash = serializer.RawData.MessageHash();
-        }
+        //    Serializer serializer = new Serializer();
+        //    NetworkSerializeHeaderWithoutSignature(ref serializer);
+        //    Bytes<Hash256> signHash = serializer.RawData.MessageHash();
+        //    Signature = Ecdsa.Sign(producerPrivateKey, signHash);
+        //    serializer.WriteSignature(Signature);
+        //    Hash = serializer.RawData.MessageHash();
+        //}
 
         public void NetworkSerializeHeaderWithoutSignature(ref Serializer serializer) {
-            serializer.Write(Serializer.VarUInt, Version);
-            serializer.Write(Serializer.VarUInt, Height);
-            serializer.Write(Serializer.VarUInt, Timestamp);
+            serializer.WriteVarUInt(Version);
+            serializer.WriteVarUInt(Height);
+            serializer.WriteVarUInt(Timestamp);
             serializer.Write(HashPrevBlock);
             serializer.Write(HashWorldState);
             serializer.Write(HashTxMerkleRoot);
+            serializer.Write(ProducerAddress);
         }
-
-        public static int NetworkMaxHeaderBytes() {
-            return 9 * 3 + 32 * 3 + 33 + 64;
-        }
-
-        /// <summary>
-        /// TODO
-        /// </summary>
-        public static Block GenesisBlock => throw new NotImplementedException();
-
 
 
         unsafe public byte[] NetworkSerialize() {
-            Serializer serializer = stackalloc byte[NetworkMaxHeaderBytes()];
-            NetworkSerializeHeaderWithoutSignature(ref serializer);
-            serializer.Write(Serializer.Signature, Signature);
+            Serializer serializer = new Serializer();
+            SerializeHeader(ref serializer);
 
-            using var mem = new MemoryStream();
-            mem.Write(serializer.RawData);
-            mem.WriteVarUInt((ulong)Transactions.Length);
+            serializer.WriteVarUInt((ulong)Transactions.Length);
             foreach (var tx in Transactions) {
-                mem.Write(tx.NetworkSerialize());
+                tx.NetworkSerialize(ref serializer);
             }
-            return mem.ToArray();
+            return serializer.RawData.ToArray();
+        }
+
+        public void ComputeHash() {
+            Serializer serializer = new Serializer();
+            SerializeHeader(ref serializer);
+            Hash = serializer.RawData.MessageHash();
+        }
+
+        public void SerializeHeader(ref Serializer serializer) {
+            NetworkSerializeHeaderWithoutSignature(ref serializer);
+            serializer.WriteSignature(Signature);
+        }
+
+        public byte[] SerializeHeader() {
+            Serializer serializer = new Serializer();
+            SerializeHeader(ref serializer);
+            return serializer.RawData.ToArray();
+        }
+
+        public void SignComputeHash(ReadOnlySpan<byte> privateKey) {
+            Serializer serializer = new Serializer();
+            NetworkSerializeHeaderWithoutSignature(ref serializer);
+            HashSignHeader = serializer.RawData.MessageHash();
+            Signature = Ecdsa.Sign(privateKey, HashSignHeader);
+            serializer.WriteSignature(Signature);
+            Hash = serializer.RawData.MessageHash();
+        }
+
+        public override bool Equals(object? obj) => obj is Block other && Hash == other.Hash;
+
+        public override int GetHashCode() => Hash.GetHashCode();
+
+        public int CompareTo(Block? other) {
+            Debug.Assert(other is not null);
+            return Height.CompareTo(other.Height);
         }
     }
 }

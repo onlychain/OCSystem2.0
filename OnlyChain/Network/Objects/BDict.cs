@@ -4,18 +4,27 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace OnlyChain.Network.Objects {
     [System.Diagnostics.DebuggerDisplay("dict Count={Count}")]
     public sealed class BDict : BObject, IDictionary<string, BObject> {
         public const byte PrefixChar = (byte)'{';
 
-        private readonly IDictionary<string, BObject> dict;
+        public static readonly IComparer<string> SortedKeyComparer = Comparer<string>.Create((a, b) => {
+            int cmp = a.Length.CompareTo(b.Length);
+            if (cmp != 0) return cmp;
+            return a.AsSpan().SequenceCompareTo(b);
+        });
+
+        private readonly Dictionary<string, BObject> dict;
 
         public BDict() => dict = new Dictionary<string, BObject>();
 
-        public BDict(IDictionary<string, BObject> dict) => this.dict = dict;
+        public BDict(Dictionary<string, BObject> dict) => this.dict = dict;
 
         public BObject this[string key] {
             get => dict.TryGetValue(key, out var value) ? value : null;
@@ -28,14 +37,14 @@ namespace OnlyChain.Network.Objects {
 
         public int Count => dict.Count;
 
-        public bool IsReadOnly => dict.IsReadOnly;
+        bool ICollection<KeyValuePair<string, BObject>>.IsReadOnly => false;
 
         public void Add(string key, BObject value) {
             dict.Add(key, value);
         }
 
         public void Add(KeyValuePair<string, BObject> item) {
-            dict.Add(item);
+            dict.Add(item.Key, item.Value);
         }
 
         public void Clear() {
@@ -51,7 +60,7 @@ namespace OnlyChain.Network.Objects {
         }
 
         public void CopyTo(KeyValuePair<string, BObject>[] array, int arrayIndex) {
-            dict.CopyTo(array, arrayIndex);
+            ((IDictionary<string, BObject>)dict).CopyTo(array, arrayIndex);
         }
 
         public IEnumerator<KeyValuePair<string, BObject>> GetEnumerator() {
@@ -63,7 +72,7 @@ namespace OnlyChain.Network.Objects {
         }
 
         public bool Remove(KeyValuePair<string, BObject> item) {
-            return dict.Remove(item);
+            return ((IDictionary<string, BObject>)dict).Remove(item);
         }
 
         public bool TryGetValue(string key, out BObject value) {
@@ -90,16 +99,45 @@ namespace OnlyChain.Network.Objects {
             return base.TrySetMember(binder, value);
         }
 
-        public override void Write(Stream stream) {
-            stream.WriteByte(PrefixChar);
-            stream.WriteVarUInt((ulong)dict.Count);
+        public override void Write(ref BWriteArgs args) {
+            args.Stream.WriteByte(PrefixChar);
+            args.Stream.WriteVarUInt((ulong)this.dict.Count);
+
+            IDictionary<string, BObject> dict;
+            if (args.SortedKey) {
+                dict = new SortedDictionary<string, BObject>(this.dict, SortedKeyComparer);
+            } else {
+                dict = this.dict;
+            }
+
             foreach (var (key, value) in dict) {
-                BString.WriteNoPrefix(stream, key);
-                value.Write(stream);
+                BString.WriteNoPrefix(args.Stream, key);
+                value.Write(ref args);
             }
         }
 
+        public BDict Clone() => new Dictionary<string, BObject>(dict);
+
         public static implicit operator BDict(Dictionary<string, BObject> dict) => new BDict(dict);
+
+        public override string ToString() {
+            var sb = new StringBuilder();
+            sb.Append('{');
+
+            bool first = true;
+            foreach (var (k, v) in this) {
+                if (first) {
+                    sb.Append(',');
+                    first = false;
+                }
+                sb.Append('"').Append(k).Append('"');
+                sb.Append(':');
+                sb.Append(v);
+            }
+
+            sb.Append('}');
+            return sb.ToString();
+        }
 
         public static BDict Make(params (string Key, BObject Value)[] keyValuePairs) {
             var result = new Dictionary<string, BObject>();

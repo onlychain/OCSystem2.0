@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 namespace OnlyChain.Model {
     public sealed class VoteData : AttachData {
         public uint Round { get; }
-        public Address[] Addresses { get; }
+        public Bytes<Address>[] Addresses { get; }
 
-        public VoteData(uint round, Address[] addresses) => (Round, Addresses) = (round, addresses);
+        public VoteData(uint round, Bytes<Address>[] addresses) => (Round, Addresses) = (round, addresses);
     }
 }

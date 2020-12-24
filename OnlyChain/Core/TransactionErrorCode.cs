@@ -12,6 +12,8 @@ namespace OnlyChain.Core {
         NotExpired,
         VoteTooLow,
         DuplicateAddress,
-
+        OutOfGas,
+        ContractNotFound,
+        ContractExecuteFail,
     }
 }

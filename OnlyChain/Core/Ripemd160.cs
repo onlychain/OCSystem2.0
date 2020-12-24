@@ -10,8 +10,9 @@ namespace OnlyChain.Core {
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Interoperability", "CA1401:P/Invokes should not be visible", Justification = "<挂起>")]
         unsafe public extern static void ComputeHash(void* inHash, void* @out);
 
-        unsafe public static Hash<Size160> ComputeHash(Hash<Size256> hash) {
-            Hash<Size160> result;
+        [SkipLocalsInit]
+        unsafe public static Bytes<Hash160> ComputeHash(Bytes<Hash256> hash) {
+            Bytes<Hash160> result;
             ComputeHash(&hash, &result);
             return result;
         }

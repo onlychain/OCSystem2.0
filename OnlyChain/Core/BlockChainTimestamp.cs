@@ -4,7 +4,9 @@ using System.Text;
 
 namespace OnlyChain.Core {
     public static class BlockChainTimestamp {
-        public static readonly DateTime GenesisDateTime = new DateTime(2020, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        // TODO: 创世时间
+        //public static readonly DateTime GenesisDateTime = DateTime.UtcNow;
+        public static readonly DateTime GenesisDateTime = new DateTime(2020, 11, 28, 16, 33, 0, DateTimeKind.Local).ToUniversalTime();
 
         public static uint ToTimestamp(DateTime dateTime) {
             TimeSpan timeSpan = dateTime - GenesisDateTime;
@@ -14,5 +16,7 @@ namespace OnlyChain.Core {
         public static DateTime ToDateTime(uint timestamp) {
             return GenesisDateTime + TimeSpan.FromSeconds(timestamp);
         }
+
+        public static uint NowTimestamp => ToTimestamp(DateTime.UtcNow);
     }
 }

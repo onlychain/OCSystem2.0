@@ -32,6 +32,23 @@ namespace OnlyChain.Core {
             return r;
         }
 
+        unsafe public static byte[] ParseToBytes(ReadOnlySpan<char> hexChars) {
+            if (hexChars.Length % 2 != 0) throw new ArgumentOutOfRangeException(nameof(hexChars), $"长度必须是2的整数倍");
+
+            ref byte table = ref MemoryMarshal.GetReference(CharToHexTable);
+            ref char charFirst = ref MemoryMarshal.GetReference(hexChars);
+            byte[] r = new byte[hexChars.Length / 2];
+            for (int i = 0; i < r.Length; i++) {
+                if (Unsafe.Add(ref charFirst, 2 * i) > 'f' || Unsafe.Add(ref charFirst, 2 * i + 1) > 'f') throw new ArgumentException("无效的十六进制字串", nameof(hexChars));
+                byte v1 = Unsafe.Add(ref table, Unsafe.Add(ref charFirst, 2 * i));
+                byte v2 = Unsafe.Add(ref table, Unsafe.Add(ref charFirst, 2 * i + 1));
+                if (v1 == 0xff || v2 == 0xff) throw new ArgumentException("无效的十六进制字串", nameof(hexChars));
+
+                r[i] = (byte)((v1 << 4) | v2);
+            }
+            return r;
+        }
+
         static ReadOnlySpan<byte> HexTemplate => new[] { (byte)'0', (byte)'1', (byte)'2', (byte)'3', (byte)'4', (byte)'5', (byte)'6', (byte)'7', (byte)'8', (byte)'9', (byte)'a', (byte)'b', (byte)'c', (byte)'d', (byte)'e', (byte)'f' };
 
         unsafe public static string ToString(ReadOnlySpan<byte> bytes) {

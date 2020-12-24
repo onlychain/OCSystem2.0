@@ -2,14 +2,13 @@
 
 using System;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics.X86;
 
 namespace OnlyChain.Core {
     internal static class MerklePatriciaTreeSupport {
@@ -249,7 +248,7 @@ namespace OnlyChain.Core {
                 public abstract Node Add(ref AddArgs args, byte* key, int length);
                 public abstract IEnumerable<KeyValuePair<TKey, TValue>> Enumerate(int index, byte[] key);
                 public abstract Node? Remove(ref RemoveArgs args, byte* key);
-                public abstract ref TValue TryGetValue(byte* key);
+                public abstract ref TValue TryGetValue(int* generation, byte* key);
                 public virtual Node PrefixConcat<TBlock>(LongPathNode<TBlock> parent) where TBlock : unmanaged, MerklePatriciaTreeSupport.IBlock => parent;
                 public abstract void ComputeHash(ref ComputeHashArgs args, int index);
                 public abstract IHashNode FindFillHash(ref FindFillHashArgs args, int index);
@@ -279,11 +278,11 @@ namespace OnlyChain.Core {
                     return this;
                 }
 
-                public override ref TValue TryGetValue(byte* key) {
+                public override ref TValue TryGetValue(int* generation, byte* key) {
                     if (child is null) {
                         return ref Unsafe.AsRef<TValue>(null);
                     }
-                    return ref child.TryGetValue(key);
+                    return ref child.TryGetValue(generation, key);
                 }
 
                 public override IHashNode FindFillHash(ref FindFillHashArgs args, int index = 0) {
@@ -343,9 +342,9 @@ namespace OnlyChain.Core {
                     children = other.children;
                 }
 
-                public override ref TValue TryGetValue(byte* key) {
+                public override ref TValue TryGetValue(int* generation, byte* key) {
                     if (this[*key] is Node child) {
-                        return ref child.TryGetValue(key + 1);
+                        return ref child.TryGetValue(generation, key + 1);
                     }
                     return ref Unsafe.AsRef<TValue>(null);
                 }
@@ -516,6 +515,7 @@ namespace OnlyChain.Core {
                     return this[p1]!.PrefixConcat(result);
                 }
 
+                [SkipLocalsInit]
                 public override void ComputeHash(ref ComputeHashArgs args, int index) {
                     THash* hashes = stackalloc THash[16];
                     int count = 0;
@@ -558,9 +558,9 @@ namespace OnlyChain.Core {
                     }
                 }
 
-                public override ref TValue TryGetValue(byte* key) {
-                    if (*key == prefix1) return ref child1.TryGetValue(key + 1);
-                    if (*key == prefix2) return ref child2.TryGetValue(key + 1);
+                public override ref TValue TryGetValue(int* generation, byte* key) {
+                    if (*key == prefix1) return ref child1.TryGetValue(generation, key + 1);
+                    if (*key == prefix2) return ref child2.TryGetValue(generation, key + 1);
                     return ref Unsafe.AsRef<TValue>(null);
                 }
 
@@ -683,6 +683,7 @@ namespace OnlyChain.Core {
                     return otherChild.PrefixConcat(result);
                 }
 
+                [SkipLocalsInit]
                 public override void ComputeHash(ref ComputeHashArgs args, int index) {
                     THash* hashPair = stackalloc THash[2];
                     if (child1.Generation == args.Generation) {
@@ -777,9 +778,9 @@ namespace OnlyChain.Core {
                     foreach (var kv in child.Enumerate(index + BlockSize, key)) yield return kv;
                 }
 
-                public override ref TValue TryGetValue(byte* key) {
+                public override ref TValue TryGetValue(int* generation, byte* key) {
                     if (pathRef.SequenceEqual(new ReadOnlySpan<byte>(key, sizeof(TBlock)))) {
-                        return ref child.TryGetValue(key + sizeof(TBlock));
+                        return ref child.TryGetValue(generation, key + sizeof(TBlock));
                     }
                     return ref Unsafe.AsRef<TValue>(null);
                 }
@@ -866,7 +867,8 @@ namespace OnlyChain.Core {
                     return this;
                 }
 
-                public override ref TValue TryGetValue(byte* key) {
+                public override ref TValue TryGetValue(int* generation, byte* key) {
+                    if (generation != null) *generation = Generation;
                     return ref value;
                 }
 
@@ -996,7 +998,7 @@ namespace OnlyChain.Core {
         public bool IsReadOnly { get; private set; } = false;
 
 
-        public MerklePatriciaTree(int generation) {
+        public MerklePatriciaTree(int generation = 0) {
             root = new Support.EmptyNode(generation);
             Count = 0;
         }
@@ -1045,9 +1047,9 @@ namespace OnlyChain.Core {
 
         public TValue this[TKey key] {
             get {
-                ref readonly TValue value = ref TryGetValue(key);
+                ref readonly TValue value = ref GetRefValue(key);
                 if (Unsafe.AsPointer(ref Unsafe.AsRef(value)) != null) return value;
-                throw new KeyNotFoundException($"键值'{key}'不存在");
+                throw new KeyNotFoundException($"Key='{key}'不存在");
             }
             set {
                 AddOrUpdate(key, value, true);
@@ -1082,7 +1084,7 @@ namespace OnlyChain.Core {
 
         public void Add(TKey key, TValue value) {
             if (!AddOrUpdate(key, value, false)) {
-                throw new ArgumentException($"键值'{key}'已存在", nameof(key));
+                throw new ArgumentException($"Key='{key}'已存在", nameof(key));
             }
         }
 
@@ -1205,7 +1207,7 @@ namespace OnlyChain.Core {
 
             var keyBuffer = stackalloc byte[sizeof(TKey) * 2];
             Support.KeyToBuffer(&key, keyBuffer);
-            ref TValue refValue = ref root.TryGetValue(keyBuffer);
+            ref TValue refValue = ref root.TryGetValue(null, keyBuffer);
             if (Unsafe.AsPointer(ref refValue) == null) {
                 value = default!;
                 return false;
@@ -1219,12 +1221,35 @@ namespace OnlyChain.Core {
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        public ref readonly TValue TryGetValue(TKey key) {
+        public ref readonly TValue GetRefValue(TKey key) {
             if (Count == 0) return ref Unsafe.AsRef<TValue>(null);
 
             var keyBuffer = stackalloc byte[sizeof(TKey) * 2];
             Support.KeyToBuffer(&key, keyBuffer);
-            return ref root.TryGetValue(keyBuffer);
+            return ref root.TryGetValue(null, keyBuffer);
+        }
+
+        /// <summary>
+        /// 当Key不存在时返回空引用，否则返回对应的Value，并返回Value的代数。
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        public ref readonly TValue GetRefValue(TKey key, out int generation) {
+            if (Count == 0) {
+                generation = Generation;
+                return ref Unsafe.AsRef<TValue>(null);
+            }
+
+            var keyBuffer = stackalloc byte[sizeof(TKey) * 2];
+            Support.KeyToBuffer(&key, keyBuffer);
+            int gen;
+            ref TValue value = ref root.TryGetValue(&gen, keyBuffer);
+            if (Unsafe.IsNullRef(ref value)) {
+                generation = Generation;
+            } else {
+                generation = gen;
+            }
+            return ref value;
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

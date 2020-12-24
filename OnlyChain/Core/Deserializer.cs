@@ -54,15 +54,15 @@ namespace OnlyChain.Core {
         public readonly static Reader<PublicKey> PublicKey = data => (Secp256k1.PublicKey.Parse(data, out int length), length);
 
         public readonly static Reader<PublicKey> PublicKeyStruct = data => {
-            U256 x = new U256(data[..sizeof(U256)], bigEndian: true);
-            U256 y = new U256(data[sizeof(U256)..(sizeof(U256) * 2)], bigEndian: true);
-            return (new PublicKey(x, y), sizeof(U256) * 2);
+            Secp256k1.Math.U256 x = new Secp256k1.Math.U256(data[..sizeof(Secp256k1.Math.U256)], bigEndian: true);
+            Secp256k1.Math.U256 y = new Secp256k1.Math.U256(data[sizeof(Secp256k1.Math.U256)..(sizeof(Secp256k1.Math.U256) * 2)], bigEndian: true);
+            return (new PublicKey(x, y), sizeof(Secp256k1.Math.U256) * 2);
         };
 
         public readonly static Reader<Signature> Signature = data => {
-            U256 r = new U256(data[..sizeof(U256)], bigEndian: true);
-            U256 s = new U256(data[sizeof(U256)..(sizeof(U256) * 2)], bigEndian: true);
-            return (new Signature(r, s), sizeof(U256) * 2);
+            Secp256k1.Math.U256 r = new Secp256k1.Math.U256(data[..sizeof(Secp256k1.Math.U256)], bigEndian: true);
+            Secp256k1.Math.U256 s = new Secp256k1.Math.U256(data[sizeof(Secp256k1.Math.U256)..(sizeof(Secp256k1.Math.U256) * 2)], bigEndian: true);
+            return (new Signature(r, s), sizeof(Secp256k1.Math.U256) * 2);
         };
 
         public readonly static Reader<ulong> VarUInt = data => (data.ReadVarUInt(out int length), length);
