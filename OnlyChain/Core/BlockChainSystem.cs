@@ -53,7 +53,7 @@ namespace OnlyChain.Core {
         public Block LastBlock { get; private set; } = null!;
         public ConcurrentDictionary<Bytes<Address>, SuperPeer?> CampaignNodes { get; private set; } = new(); // 所有竞选节点与IP端口(TCP)
         public BlockChainDatabase DB => db;
-        public Task ReadDatabaseTask { get; }
+        public Task LoadDatabaseTask { get; }
         public Task DownloadBlocksTask { get; internal set; } = Task.CompletedTask;
 
         public bool InProduction { get; internal set; } = false;
@@ -69,12 +69,12 @@ namespace OnlyChain.Core {
             ChainName = chainName ?? throw new ArgumentNullException(nameof(chainName));
             if (!wordRegex.IsMatch(chainName)) throw new ArgumentOutOfRangeException(nameof(chainName), "非法的链名");
 
-            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{databasePath}-{chainName}");
+            // string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{databasePath}-{chainName}");
             // string dataDir = Path.Combine("Z:", $"{databasePath}-{chainName}");
 
-            db = new BlockChainDatabase(Path.Combine(dataDir, "blocks"));
+            db = new BlockChainDatabase(databasePath);
 
-            ReadDatabaseTask = Task.Run(() => {
+            LoadDatabaseTask = Task.Run(() => {
                 InitSystem();
                 LoopReadBlock();
             });
@@ -89,7 +89,7 @@ namespace OnlyChain.Core {
 
             for (uint h = 2; db.GetBlock(h) is Block block;) {
                 try {
-                    try { VerifyExecuteBlock(block); } catch { throw new BadDatabaseException(); }
+                    try { VerifyExecuteBlock(block, verifySign: false); } catch { throw new BadDatabaseException(); }
                     CommitBlock(block, updateDatabase: false);
                     h++;
                 } catch (BadDatabaseException) when (!repair) {
@@ -185,7 +185,7 @@ namespace OnlyChain.Core {
         /// 验证执行区块，并设置<see cref="Block.PrecommitState"/>字段（执行前<see cref="Block.PrecommitState"/>字段必须为null）。
         /// </summary>
         /// <param name="block">非创世区块。</param>
-        unsafe public void VerifyExecuteBlock(Block block) {
+        unsafe public void VerifyExecuteBlock(Block block, bool verifySign = true) {
             if (LastBlock.CommitState is null) throw new InvalidOperationException();
 
             if (LastBlock.Hash != block.HashPrevBlock || LastBlock.Height != block.Height - 1)
@@ -194,37 +194,40 @@ namespace OnlyChain.Core {
             block.PrecommitState = LastBlock.CommitState.NextNew();
 
             bool verifyValid = true;
-            var verifyTasks = new List<Task>();
+            List<Task>? verifyTasks = null;
 
-            // 验证生产者
-            if (!IsProducer(block.ProducerAddress)) throw new InvalidBlockException();
+            if (verifySign) {
+                // 验证生产者
+                if (!IsProducer(block.ProducerAddress)) throw new InvalidBlockException();
 
-            // 验证签名，验证交易mpt
-            verifyTasks.Add(Task.Run(delegate {
-                block.ProducerPublicKey = Ecdsa.RecoverPublicKey(block.HashSignHeader, block.Signature);
-                if (block.ProducerPublicKey.ToAddress() != block.ProducerAddress) {
-                    verifyValid = false;
-                }
-            }));
-
-            // 并行验证交易签名
-            int taskCount = Math.Max(Environment.ProcessorCount - 2, 1);
-            var perCount = (int)Math.Ceiling(block.Transactions.Length / (double)taskCount);
-            int counter = 0;
-            while (counter < block.Transactions.Length) {
-                int processCount = Math.Min(perCount, block.Transactions.Length - counter);
-                int startIndex = counter;
+                verifyTasks = new List<Task>();
+                // 验证区块签名
                 verifyTasks.Add(Task.Run(delegate {
-                    for (int i = 0; verifyValid && i < processCount; i++) {
-                        Transaction transaction = block.Transactions[i + startIndex];
-                        transaction.FromPublicKey = Ecdsa.RecoverPublicKey(transaction.HashSignHeader, transaction.Signature);
-                        if (transaction.FromPublicKey.ToAddress() != transaction.From) {
-                            verifyValid = false;
-                        }
+                    block.ProducerPublicKey = Ecdsa.RecoverPublicKey(block.HashSignHeader, block.Signature);
+                    if (block.ProducerPublicKey.ToAddress() != block.ProducerAddress) {
+                        verifyValid = false;
                     }
                 }));
 
-                counter += processCount;
+                // 并行验证交易签名
+                int taskCount = Math.Max(Environment.ProcessorCount - 2, 1);
+                var perCount = (int)Math.Ceiling(block.Transactions.Length / (double)taskCount);
+                int counter = 0;
+                while (counter < block.Transactions.Length) {
+                    int processCount = Math.Min(perCount, block.Transactions.Length - counter);
+                    int startIndex = counter;
+                    verifyTasks.Add(Task.Run(delegate {
+                        for (int i = 0; verifyValid && i < processCount; i++) {
+                            Transaction transaction = block.Transactions[i + startIndex];
+                            transaction.FromPublicKey = Ecdsa.RecoverPublicKey(transaction.HashSignHeader, transaction.Signature);
+                            if (transaction.FromPublicKey.ToAddress() != transaction.From) {
+                                verifyValid = false;
+                            }
+                        }
+                    }));
+
+                    counter += processCount;
+                }
             }
 
             try {
@@ -257,9 +260,11 @@ namespace OnlyChain.Core {
                 block.PrecommitState.WorldState.ComputeHash(UserStateHashAlgorithm.Instance);
                 if (block.HashWorldState != block.PrecommitState.WorldState.RootHash) throw new InvalidBlockException();
 
-                // 等待所有交易签名验证完成
-                Task.WaitAll(verifyTasks.ToArray());
-                if (verifyValid is false) throw new InvalidBlockException();
+                if (verifyTasks is not null) {
+                    // 等待所有交易签名验证完成
+                    Task.WaitAll(verifyTasks.ToArray());
+                    if (verifyValid is false) throw new InvalidBlockException();
+                }
             } catch (InvalidBlockException) {
                 throw;
             } catch {
@@ -685,7 +690,7 @@ namespace OnlyChain.Core {
             #endregion
 
             @interface->account_exists = (ContractNative.evmc_host_context* _, in Bytes<Address> addr) => {
-                return tempStates.ContainsKey(addr) || mpt.ContainsKey(addr) ? 1 : 0;
+                return (byte)(tempStates.ContainsKey(addr) || mpt.ContainsKey(addr) ? 1 : 0);
             };
 
             @interface->get_balance = (ContractNative.evmc_host_context* _, in Bytes<Address> addr) => {

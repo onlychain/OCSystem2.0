@@ -32,6 +32,7 @@ namespace OnlyChain.Network {
         public string? NetworkPrefix { get; }
         public Bytes<Address> Address { get; }
         public IPEndPoint EndPoint { get; }
+        public IPEndPoint BindEndPoint { get; }
         public KBucket Nodes { get; }
         public CancellationToken CloseCancellationToken => closeCancelTokenSource.Token;
         public BlockChainSystem System { get; }
@@ -43,13 +44,15 @@ namespace OnlyChain.Network {
         internal Task InitializationTask => initializationTask;
 
 
-        public Client(Bytes<Address> address, IPEndPoint bindEndPoint, string? networkPrefix = null, IEnumerable<IPEndPoint>? seeds = null, SuperNodeConfig? superConfig = null, string? name = null) {
-            Name = name;
+        public Client(Bytes<Address> address, IPEndPoint endPoint, string baseDirectory, string? networkPrefix = null, IEnumerable<IPEndPoint>? seeds = null, SuperNodeConfig? superConfig = null, string? name = null) {
+            Name = name ?? endPoint.ToString();
             Address = address;
             NetworkPrefix = networkPrefix;
             SuperConfig = superConfig;
-            EndPoint = bindEndPoint;
-            System = new BlockChainSystem(this, $"{address}", networkPrefix ?? "main");
+            EndPoint = endPoint;
+            BindEndPoint = new IPEndPoint(IPAddress.Any, endPoint.Port);
+            string chainName = networkPrefix ?? "main";
+            System = new BlockChainSystem(this, Path.Combine(baseDirectory, $"{address}-{chainName}"), chainName);
             P2P = new P2P(this);
             if (superConfig is not null) ProducerSystem = new ProducerSystem(this);
             Nodes = new KBucket(16, address, P2P.Ping);
@@ -134,7 +137,8 @@ namespace OnlyChain.Network {
         }
 
         public async Task Initialization() {
-            await Task.WhenAll(System.ReadDatabaseTask, initializationTask);
+
+            await Task.WhenAll(System.LoadDatabaseTask, initializationTask);
             await System.DownloadBlocks();
             CanBroadcastBlock = true;
 

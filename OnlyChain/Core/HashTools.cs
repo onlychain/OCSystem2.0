@@ -28,6 +28,14 @@ namespace OnlyChain.Core {
             return Sha256.DoubleHash(message);
         }
 
+        public static Bytes<Hash160> MessageHash160(this ReadOnlySpan<byte> message) {
+            return Ripemd160.ComputeHash(Sha256.ComputeHash(message));
+        }
+
+        public static Bytes<Hash160> MessageHash160(this Span<byte> message) {
+            return Ripemd160.ComputeHash(Sha256.ComputeHash(message));
+        }
+
         public static Bytes<Hash256> HashesHash(this ReadOnlySpan<Bytes<Hash256>> hashes) {
             return Sha256.DoubleHash(MemoryMarshal.Cast<Bytes<Hash256>, byte>(hashes));
         }

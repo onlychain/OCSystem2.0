@@ -156,8 +156,24 @@ namespace OnlyChain.Core {
         public static bool operator >=(Bytes<T> left, Bytes<T> right) => left.CompareTo(right) >= 0;
 
         [SkipLocalsInit]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Bytes<T> operator ^(Bytes<T> left, Bytes<T> right) {
-            Bytes<T> result;
+            Unsafe.SkipInit(out Bytes<T> result);
+
+            if (sizeof(T) == 32) {
+                ((long*)&result)[0] = ((long*)&left)[0] ^ ((long*)&right)[0];
+                ((long*)&result)[1] = ((long*)&left)[1] ^ ((long*)&right)[1];
+                ((long*)&result)[2] = ((long*)&left)[2] ^ ((long*)&right)[2];
+                ((long*)&result)[3] = ((long*)&left)[3] ^ ((long*)&right)[3];
+                return result;
+            }
+            if (sizeof(T) == 20) {
+                ((long*)&result)[0] = ((long*)&left)[0] ^ ((long*)&right)[0];
+                ((long*)&result)[1] = ((long*)&left)[1] ^ ((long*)&right)[1];
+                ((int*)&result)[4] = ((int*)&left)[4] ^ ((int*)&right)[4];
+                return result;
+            }
+
             for (int i = 0; i < sizeof(T) / 8; i++) {
                 ((long*)&result)[i] = ((long*)&left)[i] ^ ((long*)&right)[i];
             }
@@ -170,7 +186,7 @@ namespace OnlyChain.Core {
             if ((sizeof(T) & 1) != 0) {
                 ((byte*)&result)[sizeof(T) - 1] = unchecked((byte)(((byte*)&left)[sizeof(T) - 1] ^ ((byte*)&right)[sizeof(T) - 1]));
             }
-            return *&result; // 跳过“使用了未赋值的局部变量”
+            return result;
         }
 
         /// <summary>
@@ -178,6 +194,7 @@ namespace OnlyChain.Core {
         /// </summary>
         /// <param name="bitIndex">从低位到高位（从右到左）的索引，从0开始计数。</param>
         /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly bool Bit(int bitIndex) {
             if (bitIndex < 0 || bitIndex >= sizeof(T) * 8) throw new ArgumentOutOfRangeException(nameof(bitIndex));
             fixed (T* p = &buffer) {

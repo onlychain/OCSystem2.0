@@ -12,13 +12,12 @@ using System.Threading.Tasks;
 
 namespace OnlyChain.Core {
     public sealed class BlockChipCollection : IReadOnlyList<byte[]?> {
-        private readonly TaskCompletionSource<object?> restoreTaskSource = new TaskCompletionSource<object?>();
+        private readonly TaskCompletionSource<object?> restoreTaskSource = new();
         private readonly byte[]?[] datas;
         private int count;
         private int writeCount = 0;
         private bool isReadOnly = false;
 
-        public readonly Bytes<Address> Address;
         public readonly PublicKey PublicKey;
         public readonly Bytes<Hash160> Id;
         public readonly int TotalCount;
@@ -28,7 +27,7 @@ namespace OnlyChain.Core {
 
         public bool CanRestore { get; private set; } = false;
 
-        public BlockChipCollection(BlockChip firstChip, Bytes<Address> address, PublicKey publicKey) {
+        public BlockChipCollection(BlockChip firstChip) {
             Id = firstChip.Id;
             TotalCount = firstChip.TotalCount;
             RestoreCount = firstChip.RestoreCount;
@@ -37,11 +36,7 @@ namespace OnlyChain.Core {
             ChipDataBytes = firstChip.Data.Length;
             BlockBytes = firstChip.BlockBytes;
 
-            if (firstChip.Verify(publicKey) is false)
-                throw new InvalidBlockChipException();
-
-            Address = address;
-            PublicKey = publicKey;
+            PublicKey = firstChip.PublicKey;
 
             count = 1;
         }
@@ -56,7 +51,7 @@ namespace OnlyChain.Core {
                 if (blockChip.Data.Length != ChipDataBytes) goto Invalid;
                 if (blockChip.BlockBytes != BlockBytes) goto Invalid;
                 if (datas[blockChip.Index] is not null) goto Invalid;
-                if (blockChip.Verify(PublicKey) is false) goto Invalid;
+                if (blockChip.PublicKey != PublicKey) goto Invalid;
 
                 datas[blockChip.Index] = blockChip.Data;
                 if (Interlocked.Increment(ref count) == RestoreCount) {
@@ -76,7 +71,12 @@ namespace OnlyChain.Core {
 
         public async ValueTask<Block> RestoreAsync() {
             await restoreTaskSource.Task;
-            return Restore();
+            Block result = Restore();
+            if (Id != BlockChip.MakeId(result.Hash, TotalCount, RestoreCount)) {
+                throw new InvalidBlockException();
+            }
+            return result;
+
         }
 
         unsafe private Block Restore() {
@@ -105,7 +105,7 @@ namespace OnlyChain.Core {
             return new Block(buffer.AsSpan(0, BlockBytes));
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "<挂起>")]
+
         public byte[]? this[int index] => datas[index];
 
         public int Count => TotalCount;

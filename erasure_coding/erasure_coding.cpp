@@ -1,5 +1,4 @@
 ﻿#include "GF.h"
-#include <bitset>
 #include <xmmintrin.h>
 #include <memory.h>
 #include <immintrin.h>
@@ -10,12 +9,20 @@
 #define EXPORT __attribute__((visibility("default")))
 #endif
 
+static bool bits_get(const u8* bits, size_t index) {
+    return bits[index >> 3] & (1 << (index & 7));
+}
+
+static void bits_set(u8* bits, size_t index) {
+    bits[index >> 3] |= 1 << (index & 7);
+}
+
 template<size_t I>
 static bool check_indexes(int indexCount, const int(*indexes)[2]) noexcept {
-    std::bitset<256> bitmap;
+    u8 bits[32]{};
     for (int i = 0; i < indexCount; i++) {
-        if (bitmap[indexes[i][I]]) return false;
-        bitmap[indexes[i][I]] = true;
+        if (bits_get(bits, indexes[i][I])) return false;
+        bits_set(bits, indexes[i][I]);
     }
     return true;
 }

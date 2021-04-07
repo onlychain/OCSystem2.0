@@ -111,13 +111,13 @@ namespace OnlyChain.Core {
 
 
         internal void ProducerBlockChipArrived(SuperEventArgs e, ReadOnlyMemory<byte> data) {
-            BlockChipArrived(BlockChip.Parse(data.Span), e.Node.PublicKey, e.Node.Address);
+            BlockChipArrived(BlockChip.Parse(data.Span));
 
             SuperBroadcast("other_chip", data, e.Node.Address);
         }
 
         internal void OtherBlockChipArrived(SuperEventArgs e, ReadOnlyMemory<byte> data) {
-            BlockChipArrived(BlockChip.Parse(data.Span), e.Node.PublicKey, e.Node.Address);
+            BlockChipArrived(BlockChip.Parse(data.Span));
         }
 
         internal void PrecommitVoteArrived(SuperEventArgs e, ReadOnlyMemory<byte> data) {
@@ -135,11 +135,13 @@ namespace OnlyChain.Core {
         }
 
 
-        private void BlockChipArrived(BlockChip blockChip, PublicKey producerPublicKey, Bytes<Address> producerAddress) {
+        private void BlockChipArrived(BlockChip blockChip) {
             if (blockChipCollectionDict.TryGetValue(blockChip.Id, out var blockChipCollection)) {
                 blockChipCollection.Add(blockChip);
                 return;
             }
+
+            Bytes<Address> producerAddress = blockChip.PublicKey.ToAddress();
 
             if (lastWaitTimer is not null) {
                 bool allowProduce = false;
@@ -157,7 +159,7 @@ namespace OnlyChain.Core {
                 if (allowProduce is false) return;
             }
 
-            blockChipCollectionDict.Add(blockChip.Id, new BlockChipCollection(blockChip, producerAddress, producerPublicKey));
+            blockChipCollectionDict.Add(blockChip.Id, new BlockChipCollection(blockChip));
         }
 
         private void PrecommitVoteArrived(SuperNode node, CommitVote precommitVote) {
@@ -347,8 +349,8 @@ namespace OnlyChain.Core {
 
                 bool validBlock = false; // 表示区块已验证通过
                 Block? block = null;
-                sbyte[] precommitFlags = new sbyte[Program.clientIndexes.Count];
-                sbyte[] commitFlags = new sbyte[Program.clientIndexes.Count];
+                //sbyte[] precommitFlags = new sbyte[Program.clientIndexes.Count];
+                //sbyte[] commitFlags = new sbyte[Program.clientIndexes.Count];
 
                 try {
                 SynchronizeState:

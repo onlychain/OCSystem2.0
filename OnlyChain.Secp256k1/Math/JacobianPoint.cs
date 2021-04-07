@@ -66,7 +66,6 @@ namespace OnlyChain.Secp256k1.Math {
         }
 
         [SkipLocalsInit]
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static JacobianPoint operator *(in JacobianPoint p, in U256N n) {
             const int W = 5;
 

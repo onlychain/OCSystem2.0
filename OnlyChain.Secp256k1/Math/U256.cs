@@ -95,7 +95,7 @@ namespace OnlyChain.Secp256k1.Math {
 
         public bool IsZero {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => v0 == 0 && v1 == 0 && v2 == 0 && v3 == 0;
+            get => (v0 | v1 | v2 | v3) == 0;
         }
 
 

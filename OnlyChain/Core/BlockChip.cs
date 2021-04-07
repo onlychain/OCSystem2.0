@@ -16,6 +16,7 @@ namespace OnlyChain.Core {
 
         private byte[] rawDataWithoutSignature;
         public Bytes<Hash256> MessageHash { get; private set; }
+        public PublicKey PublicKey;
 
         // 20 bytes: 碎片id
         // 1 byte: 碎片总数
@@ -39,9 +40,10 @@ namespace OnlyChain.Core {
             MessageHash = rawData[..deserializer.Index].MessageHash();
             Signature = deserializer.Read(Deserializer.Signature);
             if (deserializer.Index != rawData.Length) {
-                string debugText = Encoding.UTF8.GetString(rawData);
                 throw new InvalidBlockChipException();
             }
+
+            PublicKey = Ecdsa.RecoverPublicKey(MessageHash, Signature);
         }
 
         public BlockChip(Bytes<Hash160> id, int totalCount, int restoreCount, int index, int blockBytes, byte[] data, ReadOnlySpan<byte> privateKey) {
@@ -129,18 +131,20 @@ namespace OnlyChain.Core {
                 }
             }
 
-            Serializer serializer = new Serializer();
-            serializer.Write(block.Hash);
-            serializer.Write((byte)totalCount);
-            serializer.Write((byte)restoreCount);
-            serializer.WriteVarUInt((ulong)data.Length);
-            Bytes<Hash160> id = Ripemd160.ComputeHash(serializer.RawData.MessageHash());
-
+            Bytes<Hash160> id = MakeId(block.Hash, totalCount, restoreCount);
             var chips = new BlockChip[totalCount];
             for (int i = 0; i < chips.Length; i++) {
                 chips[i] = new BlockChip(id, totalCount, restoreCount, i, data.Length, chipDatas[i], privateKey);
             }
             return chips;
+        }
+
+        public static Bytes<Hash160> MakeId(Bytes<Hash256> blockHash, int totalCount, int restoreCount) {
+            Serializer serializer = new Serializer();
+            serializer.Write(blockHash);
+            serializer.Write((byte)totalCount);
+            serializer.Write((byte)restoreCount);
+            return serializer.RawData.MessageHash160();
         }
     }
 }

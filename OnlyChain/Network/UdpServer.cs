@@ -18,10 +18,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Collections;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace OnlyChain.Network {
     public sealed class UdpServer : IAsyncDisposable {
-        static int requestCancelCount = 0;
+        static volatile int requestCancelCount = 0;
         //static readonly Timer requestCancelCounterTimer = new Timer(delegate {
         //    var count = Interlocked.Exchange(ref requestCancelCount, 0);
         //    Console.WriteLine("cancel: " + count);
@@ -32,27 +33,56 @@ namespace OnlyChain.Network {
         /// </summary>
         private sealed class RequestList {
             static readonly Random random = new Random();
+            static readonly Stopwatch timer = Stopwatch.StartNew();
 
-            private readonly List<LocalRequest?> requests = new List<LocalRequest?>(128);
+            private readonly List<LocalRequest?> requests = new List<LocalRequest?>(capacity: 128);
             private ulong minIndex, autoIndex;
+
+            [SuppressMessage("CodeQuality", "IDE0052:删除未读的私有成员", Justification = "<挂起>")]
+            private readonly Timer cleanTask;
 
             unsafe public RequestList() {
                 ulong t;
                 lock (random) random.NextBytes(new Span<byte>(&t, sizeof(ulong)));
                 autoIndex = t >> 1;
                 minIndex = autoIndex;
+
+                cleanTask = new Timer(delegate {
+                    TimeSpan timeoutBegin = timer.Elapsed - requestTimeout;
+                    LocalRequest?[]? tempRequests = null;
+
+                    lock (requests) {
+                        int count = 0;
+                        for (; count < requests.Count; count++) {
+                            if (requests[count] is not LocalRequest r) continue;
+                            if (r!.Time > timeoutBegin) break; // 之后的请求都是非超时的
+                        }
+
+                        if (count > 0) {
+                            tempRequests = new LocalRequest?[count];
+                            requests.CopyTo(0, tempRequests, 0, count);
+                            requests.RemoveRange(0, count);
+                            minIndex += (ulong)count;
+                        }
+                    }
+
+                    if (tempRequests is not null) {
+                        foreach (var r in tempRequests) {
+                            if (r is null) continue;
+                            if (!r.Response.Task.IsCompleted) {
+                                r.Response.TrySetException(new RequestTimeoutException(r));
+                            }
+                        }
+                    }
+                }, null, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(1));
             }
 
-            public LocalRequest NewRequest(BDict dict, CancellationToken cancellationToken = default) {
+            public LocalRequest NewRequest(BDict dict) {
                 LocalRequest result;
                 lock (requests) {
-                    result = new LocalRequest(autoIndex++, dict, requestTimeout, cancellationToken);
+                    result = new LocalRequest(autoIndex++, dict, timer.Elapsed);
                     requests.Add(result);
                 }
-                result.CancellationTokenSource.Token.Register(() => {
-                    Pop(result.Index);
-                    result.Response.TrySetCanceled(result.CancellationTokenSource.Token);
-                });
                 return result;
             }
 
@@ -66,52 +96,11 @@ namespace OnlyChain.Network {
                     if (requestIndex >= minIndex && requestIndex - minIndex < (ulong)requests.Count) {
                         if (requests[(int)(requestIndex - minIndex)] is LocalRequest r) {
                             requests[(int)(requestIndex - minIndex)] = null;
-
-                            int i = 0;
-                            while (i < requests.Count && requests[i] == null) i++;
-                            if (i > 0) {
-                                requests.RemoveRange(0, i);
-                                minIndex += (ulong)i;
-                            }
                             return r;
                         }
                     }
                 }
                 return null;
-            }
-
-            public void RemoveAll(params ulong[] requestIndexes) {
-                lock (requests) {
-                    foreach (var requestIndex in requestIndexes) {
-                        if (requestIndex >= minIndex && requestIndex - minIndex < (ulong)requests.Count) {
-                            requests[(int)(requestIndex - minIndex)] = null;
-                        }
-                    }
-                    int i = 0;
-                    while (i < requests.Count && requests[i] == null) i++;
-                    requests.RemoveRange(0, i);
-                    minIndex += (ulong)i;
-                }
-            }
-
-            public void TryRemoveTimeout(TimeSpan timeout) {
-                if (!Monitor.TryEnter(requests)) {
-                    if (requests.Count < 1000) return; // requests.Count 不需要加锁，因为不需要那么精准的数值
-                    Monitor.Enter(requests);
-                }
-                try {
-                    var filterTime = DateTime.UtcNow - timeout;
-                    int i = 0;
-                    for (; i < requests.Count; i++) {
-                        if (requests[i] is LocalRequest r && r.DateTime > filterTime) {
-                            break;
-                        }
-                    }
-                    requests.RemoveRange(0, i);
-                    minIndex += (ulong)i;
-                } finally {
-                    Monitor.Exit(requests);
-                }
             }
 
             public LocalRequest? this[ulong requestIndex] {
@@ -145,11 +134,11 @@ namespace OnlyChain.Network {
             #region Socket相关
             udpSocket = new Socket(SocketType.Dgram, ProtocolType.Udp);
             //udpSocket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
-            udpSocket.Bind(client.EndPoint);
-            const int IOC_IN = unchecked((int)0x80000000);
-            const int IOC_VENDOR = 0x18000000;
-            const int SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
-            udpSocket.IOControl(SIO_UDP_CONNRESET, new[] { Convert.ToByte(false) }, null);
+            udpSocket.Bind(client.BindEndPoint);
+            //const int IOC_IN = unchecked((int)0x80000000);
+            //const int IOC_VENDOR = 0x18000000;
+            //const int SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
+            //udpSocket.IOControl(SIO_UDP_CONNRESET, new[] { Convert.ToByte(false) }, null);
             #endregion
 
             processCountTask = new Timer(delegate {
@@ -195,6 +184,8 @@ namespace OnlyChain.Network {
             for (int i = 0; i < serverTasks.Length; i++) {
                 serverTasks[i] = StartReceive();
             }
+
+
         }
 
         private async Task StartReceive() {
@@ -231,12 +222,11 @@ namespace OnlyChain.Network {
                         }
 
                         Interlocked.Increment(ref processCount);
-                    } else { // 表示远端响应
+                    } else { // 远端响应
                         if (requestList.Pop(packageIndex) is LocalRequest request) {
                             request.Response.TrySetResult(new RemoteResponse(packageIndex, senderAddress, (IPEndPoint)result.RemoteEndPoint, dict));
                         }
                     }
-                } catch (TaskCanceledException) {
                 } catch {
                 }
             }
@@ -252,24 +242,29 @@ namespace OnlyChain.Network {
             await udpSocket.SendToAsync(message, SocketFlags.None, remote);
         }
 
+
+
         public async Task<RemoteResponse> Request(BDict dict, EndPoint remote, int retryCount = 2, CancellationToken cancellationToken = default) {
             if (retryCount < 1) throw new ArgumentOutOfRangeException(nameof(retryCount), "重试次数不能小于1");
 
             int count = 1;
 
-            if (cancellationToken.CanBeCanceled) {
-                var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                cancellationToken = cancellationTokenSource.Token;
-                cancellationToken.Register(delegate { count = retryCount; });
-            }
-
         Retry:
             try {
-                var request = requestList.NewRequest(dict, cancellationToken);
+                LocalRequest request = requestList.NewRequest(dict);
+
+                if (cancellationToken.CanBeCanceled) {
+                    var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    cancellationTokenSource.Token.Register(delegate {
+                        request.Response.TrySetCanceled(cancellationToken);
+                        requestList.Pop(request.Index);
+                    });
+                }
+
                 dict["i"] = request.Index;
                 Send(dict, remote);
                 return await request.Response.Task;
-            } catch (TaskCanceledException) when (count < retryCount) {
+            } catch (RequestTimeoutException) when (count < retryCount) {
                 count++;
                 Interlocked.Increment(ref requestCancelCount);
                 goto Retry;
@@ -281,6 +276,8 @@ namespace OnlyChain.Network {
 
         async ValueTask Dispose(bool disposing) {
             if (!isDisposed) {
+                isDisposed = true;
+
                 try {
                     udpSocket.Shutdown(SocketShutdown.Both);
                 } catch { }
@@ -295,7 +292,6 @@ namespace OnlyChain.Network {
                     foreach (var task in serverTasks) task.Dispose();
                     GC.SuppressFinalize(this);
                 }
-                isDisposed = true;
             }
         }
 

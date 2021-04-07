@@ -92,7 +92,7 @@
       <PreprocessorDefinitions>NDEBUG;ERASURECODING_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>Default</LanguageStandard>
       <AdditionalOptions>-mavx2 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>

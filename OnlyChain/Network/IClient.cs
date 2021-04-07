@@ -16,6 +16,7 @@ namespace OnlyChain.Network {
         KBucket Nodes { get; }
         BlockChainSystem System { get; }
         IPEndPoint EndPoint { get; }
+        IPEndPoint BindEndPoint { get; }
         P2P P2P { get; }
         CancellationToken CloseCancellationToken { get; }
         SuperNodeConfig? SuperConfig { get; }

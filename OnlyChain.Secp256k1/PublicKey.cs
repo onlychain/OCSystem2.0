@@ -70,5 +70,21 @@ namespace OnlyChain.Secp256k1 {
         }
 
         public static PublicKey Parse(ReadOnlySpan<byte> bytes) => Parse(bytes, out _);
+
+        public override bool Equals(object obj) {
+            return obj is PublicKey key && X == key.X && Y == key.Y;
+        }
+
+        public override int GetHashCode() {
+            return HashCode.Combine(X, Y);
+        }
+
+        public static bool operator ==(PublicKey a, PublicKey b) {
+            return a.X == b.X && a.Y == b.Y;
+        }
+
+        public static bool operator !=(PublicKey a, PublicKey b) {
+            return a.X != b.X || a.Y != b.Y;
+        }
     }
 }

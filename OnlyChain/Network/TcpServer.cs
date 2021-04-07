@@ -30,7 +30,7 @@ namespace OnlyChain.Network {
             tcpSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 2); // 重试次数
             tcpSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 60); // 冷却间隔秒数
             tcpSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 3); // 重试间隔秒数
-            tcpSocket.Bind(client.EndPoint);
+            tcpSocket.Bind(client.BindEndPoint);
             tcpSocket.Listen(20);
 
             StartAccept();

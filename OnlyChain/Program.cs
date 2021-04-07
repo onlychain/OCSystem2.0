@@ -20,6 +20,7 @@ using System.Collections;
 using System.Diagnostics;
 using OnlyChain.Secp256k1;
 using OnlyChain.Model;
+using System.Text.Json;
 
 namespace OnlyChain {
     class Program {
@@ -283,10 +284,10 @@ namespace OnlyChain {
             block.Signature = Ecdsa.Sign(privKey, block.HashSignHeader);
             serializer.WriteSignature(block.Signature);
             block.Hash = serializer.RawData.MessageHash();
-            block.Transactions = Array.Empty<Model.Transaction>();
+            block.Transactions = Array.Empty<Transaction>();
 
             var chips = BlockChip.Split(block, 20, 14, privKey);
-            BlockChipCollection chipCollection = new BlockChipCollection(chips[5], address, publicKey);
+            BlockChipCollection chipCollection = new BlockChipCollection(chips[5]);
             for (int i = 0; i < chips.Length; i++) {
                 switch (i) {
                     case 5 or 6 or 7 or 8: continue;
@@ -494,14 +495,7 @@ namespace OnlyChain {
         public static readonly Dictionary<Bytes<Address>, string> clientNames = new Dictionary<Bytes<Address>, string>();
         public static readonly HashSet<Bytes<Address>> AllAddresses = new HashSet<Bytes<Address>>();
 
-        static async Task Main(string[] args) {
-            // Bytes<U256> v = new Bytes<U256>(0x123);
-            TestSecp256k1();
-            //TestSignTx();
-
-            return;
-
-
+        static async Task LocalTest() {
             List<Client> clients = new List<Client>();
 
             const int BeginPort = 30000;
@@ -512,9 +506,9 @@ namespace OnlyChain {
                     PrivateKey = privkey,
                 };
                 if (clients.Count is 0) {
-                    c = new Client(addr, new IPEndPoint(IPAddress.Loopback, port), superConfig: config, name: $"client-{port}");
+                    c = new Client(addr, new IPEndPoint(IPAddress.Loopback, port), baseDirectory: @"Z:\", superConfig: config, name: $"client-{port}");
                 } else {
-                    c = new Client(addr, new IPEndPoint(IPAddress.Loopback, port), seeds: new[] { clients[0].EndPoint }, superConfig: config, name: $"client-{port}");
+                    c = new Client(addr, new IPEndPoint(IPAddress.Loopback, port), baseDirectory: @"Z:\", seeds: new[] { clients[0].EndPoint }, superConfig: config, name: $"client-{port}");
                 }
                 clientIndexes[c.Address] = clients.Count;
                 clientNames[c.Address] = c.Name;
@@ -533,7 +527,51 @@ namespace OnlyChain {
             }
             await Task.WhenAll(disposeTasks.ToArray());
 
+            await Task.Delay(-1);
+        }
 
+        static async Task Main(string[] args) {
+            await LocalTest();
+            return;
+
+
+            string configDirectory = args.Length > 0 ? args[0] : AppDomain.CurrentDomain.BaseDirectory;
+            string configJsonPath = Path.Combine(configDirectory, "config.json");
+            JsonElement json = JsonDocument.Parse(File.OpenRead(configJsonPath), new JsonDocumentOptions { AllowTrailingCommas = true }).RootElement;
+            IPEndPoint endPoint = IPEndPoint.Parse(json.GetProperty("endpoint").GetString());
+
+            string name = null;
+            if (json.TryGetProperty("name", out var nameElement)) {
+                name = nameElement.GetString();
+            }
+
+            Bytes<Address> addr;
+            SuperNodeConfig superConfig = null;
+            if (json.TryGetProperty("private-key", out var privateKeyElement)) {
+                superConfig = new SuperNodeConfig() { PrivateKey = Hex.ParseToBytes(privateKeyElement.GetString()) };
+                var publicKey = Secp256k1.Secp256k1.CreatePublicKey(superConfig.PrivateKey);
+                addr = publicKey.ToAddress();
+            } else {
+                addr = new Bytes<Address>(json.GetProperty("address").GetString());
+            }
+
+            IPEndPoint[] seeds = null;
+            if (json.TryGetProperty("seeds", out var seedsElement)) {
+                seeds = new IPEndPoint[seedsElement.GetArrayLength()];
+                for (int i = 0; i < seeds.Length; i++) {
+                    seeds[i] = IPEndPoint.Parse(seedsElement[i].GetString());
+                }
+            }
+
+            string network = null;
+            if (json.TryGetProperty("network", out var networkElement)) {
+                network = networkElement.GetString();
+            }
+
+            Client nodeClient = new Client(addr, endPoint, configDirectory, network, seeds, superConfig, name);
+            await nodeClient.Initialization();
+
+            await Task.Delay(-1);
         }
     }
 }

@@ -644,7 +644,7 @@ namespace OnlyChain.Network {
             if (peer.IsOnline) return true;
 
             try {
-                await peer.InitSocket();
+                await peer.InitSocket(cancellationToken: client.CloseCancellationToken);
 
                 using var stream = new NetworkStream(peer.Socket!, ownsSocket: false);
 
@@ -669,12 +669,12 @@ namespace OnlyChain.Network {
         }
 
         public async Task SuperSend(SuperPeer peer, BDict headerDict, ReadOnlyMemory<byte> body) {
-            if (!await SuperConnect(peer)) throw new InvalidOperationException("peer连接失败");
-
-            using var stream = new NetworkStream(peer.Socket!, ownsSocket: false);
-
-            await peer.SendLock!.WaitAsync(client.CloseCancellationToken);
+            await peer.SendLock.WaitAsync(client.CloseCancellationToken);
             try {
+                if (!await SuperConnect(peer)) throw new InvalidOperationException("peer连接失败");
+
+                using var stream = new NetworkStream(peer.Socket!, ownsSocket: false);
+
                 await Bencode.EncodeNoPrefixAsync(stream, headerDict, client.CloseCancellationToken);
                 await stream.WriteAsync(body, client.CloseCancellationToken);
             } finally {
@@ -716,7 +716,7 @@ namespace OnlyChain.Network {
             using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, client.CloseCancellationToken);
 
             Socket socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-            socket.Bind(new IPEndPoint(client.EndPoint.Address, 0));
+            //socket.Bind(new IPEndPoint(client.EndPoint.Address, 0));
             await socket.ConnectAsync(remote.Address, remote.Port, cancellationToken: cancellationTokenSource.Token);
             return new NetworkStream(socket, ownsSocket: true);
         }
